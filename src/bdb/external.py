@@ -72,7 +72,9 @@ def _clean_players(df: pl.DataFrame) -> pl.DataFrame:
 # --------------------------------------------------------------------------- registry
 
 
-def _seasonal(fn: Callable[..., pl.DataFrame], clean: Callable[[pl.DataFrame], pl.DataFrame] | None = None, **kw: str) -> Loader:
+def _seasonal(
+    fn: Callable[..., pl.DataFrame], clean: Callable[[pl.DataFrame], pl.DataFrame] | None = None, **kw: str
+) -> Loader:
     def load_one(season: int) -> pl.DataFrame:
         df = fn(season, **kw)
         return clean(df) if clean else df
@@ -80,7 +82,9 @@ def _seasonal(fn: Callable[..., pl.DataFrame], clean: Callable[[pl.DataFrame], p
     return load_one
 
 
-def _static(fn: Callable[..., pl.DataFrame], clean: Callable[[pl.DataFrame], pl.DataFrame] | None = None, **kw: object) -> Loader:
+def _static(
+    fn: Callable[..., pl.DataFrame], clean: Callable[[pl.DataFrame], pl.DataFrame] | None = None, **kw: object
+) -> Loader:
     def load_all(_season: int = 0) -> pl.DataFrame:
         df = fn(**kw)
         return clean(df) if clean else df
@@ -90,23 +94,60 @@ def _static(fn: Callable[..., pl.DataFrame], clean: Callable[[pl.DataFrame], pl.
 
 def _registry() -> dict[str, Dataset]:
     ds = [
-        Dataset("pbp", _seasonal(nfl.load_pbp, _clean_pbp), description="nflfastR play-by-play incl. EPA/WPA/xpass/cp/cpoe"),
-        Dataset("participation", _seasonal(nfl.load_participation, _clean_participation), description="NGS/FTN on-field players, personnel, box, coverage"),
-        Dataset("ftn_charting", _seasonal(nfl.load_ftn_charting, _clean_ftn), description="FTN charting (play action, RPO, blitzers, drops...)"),
+        Dataset(
+            "pbp", _seasonal(nfl.load_pbp, _clean_pbp), description="nflfastR play-by-play incl. EPA/WPA/xpass/cp/cpoe"
+        ),
+        Dataset(
+            "participation",
+            _seasonal(nfl.load_participation, _clean_participation),
+            description="NGS/FTN on-field players, personnel, box, coverage",
+        ),
+        Dataset(
+            "ftn_charting",
+            _seasonal(nfl.load_ftn_charting, _clean_ftn),
+            description="FTN charting (play action, RPO, blitzers, drops...)",
+        ),
         Dataset("rosters", _seasonal(nfl.load_rosters), description="Season rosters"),
         Dataset("rosters_weekly", _seasonal(nfl.load_rosters_weekly), description="Weekly rosters"),
-        Dataset("schedules", _seasonal(nfl.load_schedules), description="Games: old_game_id, roof, surface, weather, lines"),
+        Dataset(
+            "schedules", _seasonal(nfl.load_schedules), description="Games: old_game_id, roof, surface, weather, lines"
+        ),
         Dataset("snap_counts", _seasonal(nfl.load_snap_counts), description="PFR snap counts by game"),
         Dataset("injuries", _seasonal(nfl.load_injuries), description="Weekly injury reports"),
         Dataset("depth_charts", _seasonal(nfl.load_depth_charts), description="Depth charts"),
-        Dataset("players", _static(nfl.load_players, _clean_players), seasonal=False, description="Player master table with ID crosswalk + bio + draft"),
-        Dataset("combine", _static(nfl.load_combine, seasons=True), seasonal=False, description="NFL combine results, all years"),
-        Dataset("draft_picks", _static(nfl.load_draft_picks, seasons=True), seasonal=False, description="Draft picks, all years"),
+        Dataset(
+            "players",
+            _static(nfl.load_players, _clean_players),
+            seasonal=False,
+            description="Player master table with ID crosswalk + bio + draft",
+        ),
+        Dataset(
+            "combine",
+            _static(nfl.load_combine, seasons=True),
+            seasonal=False,
+            description="NFL combine results, all years",
+        ),
+        Dataset(
+            "draft_picks",
+            _static(nfl.load_draft_picks, seasons=True),
+            seasonal=False,
+            description="Draft picks, all years",
+        ),
     ]
     for st in ("passing", "rushing", "receiving"):
-        ds.append(Dataset(f"ngs_{st}", _seasonal(nfl.load_nextgen_stats, stat_type=st), description=f"NGS {st} (week 0 = season)"))
+        ds.append(
+            Dataset(
+                f"ngs_{st}", _seasonal(nfl.load_nextgen_stats, stat_type=st), description=f"NGS {st} (week 0 = season)"
+            )
+        )
     for st in ("pass", "rush", "rec", "def"):
-        ds.append(Dataset(f"pfr_{st}", _seasonal(nfl.load_pfr_advstats, stat_type=st, summary_level="week"), description=f"PFR advanced {st}, weekly"))
+        ds.append(
+            Dataset(
+                f"pfr_{st}",
+                _seasonal(nfl.load_pfr_advstats, stat_type=st, summary_level="week"),
+                description=f"PFR advanced {st}, weekly",
+            )
+        )
     return {d.name: d for d in ds}
 
 
