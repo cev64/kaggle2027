@@ -21,7 +21,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import polars as pl
-from scipy.optimize import curve_fit
 from scipy.signal import find_peaks, savgol_filter
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -598,11 +597,11 @@ def consistency_check(feat: pd.DataFrame, drills, feature="duration") -> dict:
     rng = np.random.default_rng(0)
     for _ in range(200):
         p = rng.permutation(cols)
-        h1, h2 = wide[p[: len(p) // 2]].mean(1), wide[p[len(p) // 2:]].mean(1)
-        ok = wide[p[: len(p) // 2]].notna().sum(1).ge(1) & wide[p[len(p) // 2:]].notna().sum(1).ge(1)
+        h1, h2 = wide[p[: len(p) // 2]].mean(axis=1), wide[p[len(p) // 2:]].mean(axis=1)
+        ok = wide[p[: len(p) // 2]].notna().sum(axis=1).ge(1) & wide[p[len(p) // 2:]].notna().sum(axis=1).ge(1)
         rs.append(np.corrcoef(h1[ok], h2[ok])[0, 1])
     r = float(np.nanmean(rs))
-    return {"feature": feature, "nDrills": len(cols), "nPlayers": int(wide.notna().sum(1).ge(2).sum()),
+    return {"feature": feature, "nDrills": len(cols), "nPlayers": int(wide.notna().sum(axis=1).ge(2).sum()),
             "splitHalfR": r, "spearmanBrown": 2 * r / (1 + r)}
 
 
