@@ -1,0 +1,13 @@
+pandas
+pyarrow
+polars
+numpy
+scipy
+matplotlib
+seaborn
+scikit-learn
+lightgbm
+duckdb
+nflreadpy
+kaggle
+jupyter

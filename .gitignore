@@ -1,0 +1,10 @@
+data/raw/
+data/external/
+data/processed/
+*.zip
+__pycache__/
+.ipynb_checkpoints/
+.venv/
+.env
+kaggle.json
+access_token
