@@ -10,7 +10,7 @@ Five prototypes (see docs/eda/game_movement.md):
   5. OL pass set    - backward/lateral set speed in first 1 s on pass-block snaps vs Combine
                       PASS_PRO_MIRROR / wave drill and pressure allowed
 
-Memory: each season is scanned lazily with column + row filters; peak RSS stays ~2-3 GB.
+Memory: each season is scanned lazily with column + row filters; peak RSS ~1.3 GB.
 Play-level outputs are cached in data/processed/cache/gm_*.parquet (``--refresh`` rebuilds).
 
 Run:  PYTHONPATH=src python scripts/eda/game_movement.py [--refresh]
@@ -575,6 +575,17 @@ def main():
     RESULTS["trigger_rel_man"] = {m: split_half(tr[tr["cov"] == "MAN"], m, min_half=10) for m in tmets}
     for k_ in ("trigger_rel", "trigger_rel_man"):
         print(k_, {m: (v["n_players"], v["sb"], v.get("rel_at_median_n")) for m, v in RESULTS[k_].items()})
+    # role-adjusted: residualize on coverage family, depth and speed at the throw
+    X = pd.get_dummies(tr["cov"]).astype(float)
+    X["depth"], X["sAt"], X["sAt2"] = tr["depthAtPass"], tr["sAtPass"], tr["sAtPass"] ** 2
+    okr = X.notna().all(axis=1)
+    for m in ["tPeakAccel", "speedGain1s", "absHeadingChange", "peakAccel"]:
+        ok = okr & tr[m].notna()
+        beta, *_ = np.linalg.lstsq(X[ok].to_numpy(), tr.loc[ok, m].to_numpy(), rcond=None)
+        tr.loc[ok, m + "_res"] = tr.loc[ok, m] - X[ok].to_numpy() @ beta
+    RESULTS["trigger_rel_resid"] = {m: split_half(tr, m + "_res", min_half=20)
+                                    for m in ["tPeakAccel", "speedGain1s", "absHeadingChange", "peakAccel"]}
+    print("resid:", {m: (v["n_players"], v["sb"], v.get("rel_at_median_n")) for m, v in RESULTS["trigger_rel_resid"].items()})
     tp = tr.groupby("nflId").agg(n=("tPeakAccel", "size"), **{m: (m + "_z", "mean") for m in tmets})
     tp = tp[tp["n"] >= 40]
     bpp = bp.groupby("nflId")[["codTime", "decelTime", "timeToRegain", "peakReaccel", "peakDecel", "minSpeed"]].mean()
@@ -639,6 +650,17 @@ def main():
     RESULTS["ol_within_play"] = {m: fmt(corr_ci(og[m + "_z"] - og.groupby("nflId")[m + "_z"].transform("mean"),
                                                 og["peak_pressure_probability_allowed"] - og.groupby("nflId")["peak_pressure_probability_allowed"].transform("mean")))
                                  for m in ["maxBackV", "setDist10"]}
+    og["setDepth05"] = -og["dx05"]
+    for m in ["maxBackV", "setDepth10", "setDepth05", "maxLatV"]:
+        sub = og.dropna(subset=[m, "dropback_duration", "peak_pressure_probability_allowed"])
+        xw = sub[m] - sub.groupby("nflId")[m].transform("mean")
+        yw = sub["peak_pressure_probability_allowed"] - sub.groupby("nflId")["peak_pressure_probability_allowed"].transform("mean")
+        dw = sub["dropback_duration"] - sub.groupby("nflId")["dropback_duration"].transform("mean")
+        rx = xw - np.polyval(np.polyfit(dw, xw, 1), dw)
+        ry = yw - np.polyval(np.polyfit(dw, yw, 1), dw)
+        RESULTS.setdefault("ol_within_play_ctrl_dropback", {})[m] = fmt(corr_ci(rx, ry))
+    RESULTS["ol_dropback_corr"] = {m: fmt(corr_ci(og[m], og["dropback_duration"])) for m in ["maxBackV", "setDepth10", "setDepth05"]}
+    print("within ctrl dropback:", RESULTS["ol_within_play_ctrl_dropback"], RESULTS["ol_dropback_corr"])
     print("OL vs peak pressure prob:", RESULTS["ol_vs_pressure_player"])
     print("OL vs pressure rate:", RESULTS["ol_vs_pressrate_player"])
     print("within:", RESULTS["ol_within_play"])
