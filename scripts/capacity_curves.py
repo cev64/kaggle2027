@@ -147,6 +147,28 @@ def figure(cap):
     fig.savefig(FIG, dpi=130)
 
 
+def impute_vmax(cap, cr, pls):
+    """All 510 prospects; vmax imputed from official forty + weight (fit within group) when no 40 is tracked.
+
+    ``vmaxSource``: tracked / imputed_forty / none. Burst is never imputed (the stopwatch
+    does not carry it). The WR go route was tested as a fallback and rejected (CV R^2 0.08).
+    """
+    base = cr[["nflId", "combinePosition", "combineWeight", "forty", "tenYdSplit", "ngsAthleticismScore"]].merge(
+        pls[["nflId", "displayName", "draftOverallPick", "draftYear"]], on="nflId", how="left")
+    keep = [c for c in cap.columns if c not in base.columns or c == "nflId"]
+    full = base.merge(cap[keep], on="nflId", how="left")
+    full["vmaxSource"] = np.where(full["vmax"].notna(), "tracked", "none")
+    for g, d in full.groupby("combinePosition"):
+        tr = d.dropna(subset=["vmax", "forty", "combineWeight"])
+        todo = d["vmax"].isna() & d["forty"].notna() & d["combineWeight"].notna()
+        if todo.any() and len(tr) >= 15:
+            m = LinearRegression().fit(tr[["forty", "combineWeight"]], tr["vmax"])
+            idx = todo[todo].index
+            full.loc[idx, "vmax"] = m.predict(full.loc[idx, ["forty", "combineWeight"]])
+            full.loc[idx, "vmaxSource"] = "imputed_forty"
+    return full
+
+
 def main() -> int:
     ct, cr, pls = load()
     att = K.profile_attempts(ct)
@@ -157,7 +179,8 @@ def main() -> int:
                     on="nflId", how="left").merge(pls[["nflId", "displayName", "draftOverallPick", "draftYear"]],
                                                   on="nflId", how="left")
     cap = K.add_si(cap)
-    cap.to_parquet(OUT / "capacity_players.parquet")
+    full = impute_vmax(cap, cr, pls)
+    full.to_parquet(OUT / "capacity_players.parquet")
 
     params = ["vmax", "tau", "a0", "d90", "tModel10", "tModel40", "pmaxRel",
               "split2_10", "split10_20", "split20_40", "v10", "v10rel", "burst2_10"]
@@ -192,6 +215,11 @@ def main() -> int:
         "\n## Redundancy: CV R² of each capacity parameter from stopwatch + weight, within group\n",
         "Lower is better here: the remaining share is information the stopwatch does not carry.\n\n", md(red),
         "\n## Within-group correlations of the chosen capacities\n", md(within_group_corr(cap), 2),
+        "\n## Coverage of capacity estimates (all 510 prospects)\n",
+        "Top speed is imputed from the official forty and weight (within-group linear fit, CV R² 0.73 for WR/TE) "
+        "when no 40 is tracked. The WR go route was tested as a fallback and rejected: go-route peak vs vmax r = 0.37, "
+        "and imputation from go-route peak plus weight has CV R² 0.08. Burst is never imputed.\n\n",
+        md(full.groupby(["combinePosition", "vmaxSource"]).size().unstack(fill_value=0).reset_index()),
         "\n## Parameter correlations (all players)\n", md(corr, 2),
         "\n## Group medians (yd/s, s, yd; SI: F0 N/kg, Pmax W/kg and W)\n", md(summ, 2),
         "\n![capacity curves](fig/capacity_curves.png)\n",

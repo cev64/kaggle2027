@@ -108,6 +108,20 @@ Lower is better here: the remaining share is information the stopwatch does not 
 | OL      |  95 |                0.22 |           -0.84 |                -0.58 |                     -0.58 |                        -0.07 |                   -0    |
 
 
+## Coverage of capacity estimates (all 510 prospects)
+
+Top speed is imputed from the official forty and weight (within-group linear fit, CV R² 0.73 for WR/TE) when no 40 is tracked. The WR go route was tested as a fallback and rejected: go-route peak vs vmax r = 0.37, and imputation from go-route peak plus weight has CV R² 0.08. Burst is never imputed.
+
+
+| combinePosition   |   imputed_forty |   none |   tracked |
+|:------------------|----------------:|-------:|----------:|
+| DB                |               2 |     18 |       102 |
+| DL                |               1 |     24 |        93 |
+| OL                |               0 |     26 |        95 |
+| TE                |               0 |      8 |        34 |
+| WR                |               3 |     10 |        94 |
+
+
 ## Parameter correlations (all players)
 
 |            |   vmax |    a0 |   d90 |   split2_10 |   v10rel |   split20_40 |
