@@ -115,18 +115,33 @@ Note: Kaggle says "optical tracking", while the NFL release says "Zebra tracking
 | 2 | `combine_results.csv` | prospect × combine year | `combine_position`, `combine_height`, `combine_weight`, `hand_size`, `arm_length`, `wing_span`, `ten_yd_split`, `forty`, `vertical`, `broad_jump`, `three_cone`, `short_shuttle`, `bench_reps` (nulls = opt-outs), `ngs_athleticism_score`, `ngs_college_production_score`, `ngs_final_score` |
 | 3 | `combine_tracking.csv` | 10 Hz frame, **6,310 drill attempts** | `draft_year`, `event_id` (one drill attempt), `nfl_id`, `entity_type` (`PLAYER`/`BALL`), `time` (ISO), `drill_type` (`FORTY_YARD_DASH`, `THREE_CONE_DRILL`, `SHORT_SHUTTLE`, `SKILL_DRILLS_WR/DB/OL/DL/TE`), `drill_name` (e.g., `GAUNTLET_DRILL`, `RUN_THE_HOOP_DRILL`, `BACK_PEDAL_AND_TRANSITION_45_DEGREE_REACTION`, `SLOT_STRIKE_ROUTE_LEFT`, `PASS_PRO_MIRROR_DRILL`, `OL_PULL_DRILL_FOLD...`), `attempt`, `x`, `y`, `s`, `a`, `dis`, `dir`. **No `o` (orientation) column.** |
 | 4 | `player_career_successes.csv` | 1 row per prospect | `career_offensive_snaps`, `career_defensive_snaps`, `career_special_teams_snaps`, `career_games_active`, `career_games_started`, `ap_all_pro_1st_team`, `ap_all_pro_2nd_team`, `pro_bowl_original_ballot` |
-| 5 | `player_play.csv` | **316,338** player-plays (2023–2025) | Context: `game_id`, `play_id`, `team_abbr`, `nfl_id`, `lined_up_position`, down/distance/clock/score, `play_direction`. Value: pre-snap WP, WPA, `expected_points`, `expected_points_added`. Scheme: `offense_formation`, `receiver_alignment`, `pass_result`, `pass_length`, penalty fields, `yards_gained`, `team_coverage_man_zone`, `team_coverage_type`, `in_motion_at_ball_snap`. Receiving: `target`, `rec_yards`, `rush_yards`, `yards_after_catch`, `fumble(_lost)`, `route_ran`, **`separation_at_pass_forward`**, `cushion`, `expected_yards_after_catch`. OL: `dropback_duration`, `pass_rushers_encountered`, **`peak_pressure_probability_allowed`**, `pressure_allowed`, `sack_allowed`, `time_to_pressure_allowed`, `extended_sack_allowed`. DL/defense: `blitzing`, **`player_get_off`**, `sack`, `tackle`, `assist`, `tackle_for_loss`, `caused_forced_fumble`, `time_to_pressure`, `time_to_qb_hurry`, `coverage_assignment(_at_snap)`, `quick_pressure`, `unblocked_pressure` |
-| 6 | `games.csv` | 1,002 games | `game_id`, `game_key`, `season`, `season_type` (`REG`/`POST`), `week`, `home_team_abbr`, `visitor_team_abbr` |
+| 5 | `player_play.csv` | **314,197** player-plays (2023–2025, incl. PRE/POST) | Context: `game_id`, `play_id`, `team_abbr`, `nfl_id`, `lined_up_position`, down/distance/clock/score, `play_direction`. Value: pre-snap WP, WPA, `expected_points`, `expected_points_added`. Scheme: `offense_formation`, `receiver_alignment`, `pass_result`, `pass_length`, penalty fields, `yards_gained`, `team_coverage_man_zone`, `team_coverage_type`, `in_motion_at_ball_snap`. Receiving: `target`, `rec_yards`, `rush_yards`, `yards_after_catch`, `fumble(_lost)`, `route_ran`, **`separation_at_pass_forward`**, `cushion`, `expected_yards_after_catch`. OL: `dropback_duration`, `pass_rushers_encountered`, **`peak_pressure_probability_allowed`**, `pressure_allowed`, `sack_allowed`, `time_to_pressure_allowed`, `extended_sack_allowed`. DL/defense: `blitzing`, **`player_get_off`**, `sack`, `tackle`, `assist`, `tackle_for_loss`, `caused_forced_fumble`, `time_to_pressure`, `time_to_qb_hurry`, `coverage_assignment(_at_snap)`, `quick_pressure`, `unblocked_pressure` |
+| 6 | `games.csv` | 1,002 games | `game_id`, `game_key`, `season`, `season_type` (`PRE`/`REG`/`POST`), `week`, `home_team_abbr`, `visitor_team_abbr` |
 | 7–9 | `game_tracking_2023.csv`, `game_tracking_2024.csv`, `game_tracking_2025.csv` | 10 Hz frames | `game_id`, `play_id`, `nfl_id`, `time`, `x`, `y`, `s`, `a`, `dis`, `o`, `dir`, `event` (`ball_snap`, `pass_forward`, `pass_arrived`, `tackle`, `first_contact`, `out_of_bounds`, …) |
 
-### Critical structural notes [INFERENCE from the schema; verify after download]
-1. **Game tracking covers only the 510 cohort players.** The doc says it "tracks all 510 rookie cohort prospects". There appear to be **no teammates, opponents, or ball** in game tracking, so you cannot compute WR-vs-DB separation from raw tracking. Use `player_play` NGS fields (`separation_at_pass_forward`, `peak_pressure_probability_allowed`, `player_get_off`, …) as outcomes, or the player's own movement (speed, acceleration, change of direction, reaction after `pass_forward`).
-2. **Unequal exposure.** The 2023 class has up to 3 seasons, while the 2025 class has at most 1. Career totals in `player_career_successes.csv` are confounded by years in the league, so normalize per season or per snap.
-3. **Draft capital confounds everything.** Snaps and starts follow draft position, which itself depends on Combine results. To find "non-obvious" signal, control for `draft_overall_pick` and the stopwatch numbers, and show that tracking adds information beyond them.
-4. **Small n per position.** There are 510 players across about 17 roster positions, so expect roughly 50–150 per group. Use shrinkage or hierarchical models and report uncertainty.
-5. The data has no frame/play id columns for the Combine. Frames are ordered by `time` within `event_id`. Combine data has no orientation, so infer hip turn from changes in `dir`.
-6. The example `game_id` `2024080952` looks like an **August (preseason)** date, and `games.csv` includes `POST`. Check `season_type` and filter to `REG` to match "regular-season" in the prompt.
-7. The `BALL` entity appears in Combine tracking (e.g., gauntlet/catching drills), so catch-point analysis is possible there.
+### Verified against the downloaded files (2026-10-15)
+Full detail is in `docs/data_notes.md`, `docs/data_qa.md` and `docs/join_rates.md`. Corrections to the table above:
+- **`player_play.csv` has 314,197 rows**, not 316,338. The player's team column is `team_abbr`.
+- **Combine `event_id` is one player's attempt**, with a single prospect per attempt and never a drill partner. The `BALL` entity carries the receiver's `nfl_id`. `attempt` counts reps within a `drill_type` session, not within a drill. Most player × drill cells have one rep (75%); 24% have two.
+- **Every prospect has his position's skill drills** (DB 122, OL 121, DL 118, WR 107, TE 42). Stopwatch drills are tracked only for a subset: 40 for 418 players, 3-cone for 160 and shuttle for 170. Four DL players have `SKILL_DRILLS_LB` attempts.
+- Some drill names change spelling across years and are canonicalized in `drillCanon`. The OL mirror drill has 121 attempts (2023: `PASS_PRO_MIRROR_DRILL`, 2024–25: `PASS_PRO-MIRROR_DRILL`). DL `SHORT_ZONE_BREAKS` was split into three drills in 2025.
+
+Structural notes [the earlier INFERENCES, now VERIFIED or corrected]:
+1. **Game tracking covers only the cohort.** There are no non-cohort teammates, no opponents and no ball, and all `nfl_id`s are in `players.csv`. Each player-play starts 1.0 s before `ball_snap` and runs about 7 s, with `o` included. Up to 10 cohort players share a play. Separation, get-off and pressure must come from `player_play` NGS fields, plus the player's own movement.
+2. **Unequal exposure** is confirmed. REG player-plays are 38.8k in 2023, 85.6k in 2024 and 124.9k in 2025, reflecting more classes in the league each year.
+3. Draft-capital confounding: see `docs/eda/confounding.md`.
+4. **n per group** is about 107–122 for WR/DB/OL/DL, and only 42 for TE.
+5. Combine has no orientation and no frame id. Frames are exactly 10 Hz.
+6. **PRE and POST are included.** `games.csv` has 49 PRE, 272 REG and 13 POST games per season, and PRE is 15–20% of player-plays. Always filter `season_type == "REG"`. nflverse has no preseason games, so PRE plays will not join to pbp.
+7. The BALL entity in Combine appears only on WR/TE route and catch drills.
+8. **NGS outcomes are position-specific:**
+   - separation: WR/TE;
+   - get-off: DL;
+   - pressure probability allowed: OL;
+   - cushion: DB and WR;
+   - coverage_assignment: DB.
+   There is no direct NGS coverage-success field for DBs.
+9. **nflverse joins** match 100% for REG/POST games and plays (pbp, participation and FTN). 485 of 510 `nflId`s match nflverse `players`; the other 25 are fringe players with preseason-only snaps. Draft picks agree 100%. Every REG/POST cohort player-play is confirmed on the field in participation.
 
 ### Comparison with prior years [PRIOR YEAR, verified from those competitions' Kaggle pages]
 - **2025:** `games.csv`, `plays.csv`, `players.csv`, `player_play.csv`, `tracking_week_[1-9].csv` (2022 season, all 22 players plus ball, camelCase columns, `frameId`, `frameType`). PFF columns had a `pff_` prefix.
