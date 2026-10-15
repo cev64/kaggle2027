@@ -3,7 +3,9 @@
 Inputs are pandas (or polars, auto-converted) frames with ``gameId, playId,
 frameId, nflId, x, y`` plus ``vx, vy`` (from :func:`bdb.tracking.add_kinematics`)
 and a team column: ``side`` (offense/defense/ball) preferred, else ``club``.
-Ball rows (``isBall``) are excluded from player-vs-player features.
+Ball rows (``isBall``) are excluded from player-vs-player features. These need
+full-field data (BDB 2025-style); BDB 2027 game tracking holds cohort players
+only, so use :mod:`bdb.drills` single-player features there.
 """
 from __future__ import annotations
 
@@ -11,15 +13,18 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import ConvexHull, Voronoi
 
-from .tracking import FIELD_LENGTH, FIELD_WIDTH
+from .tracking import FIELD_LENGTH, FIELD_WIDTH, play_key
 
-FRAME_KEY = ["gameId", "playId", "frameId"]
 MAX_SPEED = 13.0  # yd/s, Fernandez & Bornn speed normalizer
 RECEIVER_POSITIONS = {"WR", "TE", "RB", "FB"}
 
 
 def _pd(df) -> pd.DataFrame:
     return df.to_pandas() if hasattr(df, "to_pandas") and not isinstance(df, pd.DataFrame) else df
+
+
+def _fk(df) -> list[str]:
+    return play_key(df) + ["frameId"]
 
 
 def _team_col(df: pd.DataFrame) -> str:
@@ -40,10 +45,10 @@ def nearest_players(df, chunk: int = 20_000) -> pd.DataFrame:
     Adds ``distNearestOpp``, ``nearestOppId``, ``distNearestMate``, ``nearestMateId``.
     Vectorized by padding each frame to a (frames, players) tensor.
     """
-    df = _players(_pd(df)).sort_values(FRAME_KEY).reset_index(drop=True)
+    df = _players(_pd(df)).sort_values(_fk(df)).reset_index(drop=True)
     team = df[_team_col(df)].astype(str).to_numpy()
-    code = df.groupby(FRAME_KEY, sort=False).ngroup().to_numpy()
-    slot = df.groupby(FRAME_KEY, sort=False).cumcount().to_numpy()
+    code = df.groupby(_fk(df), sort=False).ngroup().to_numpy()
+    slot = df.groupby(_fk(df), sort=False).cumcount().to_numpy()
     F, P = code.max() + 1, slot.max() + 1
     xy = np.full((F, P, 2), np.nan)
     xy[code, slot] = df[["x", "y"]].to_numpy(float)
@@ -95,8 +100,8 @@ def leverage(df) -> pd.DataFrame:
     if "distNearestOpp" not in df.columns:
         df = nearest_players(df)
     off = df[df["side"].astype(str) == "offense"] if "side" in df.columns else df
-    dpos = df[FRAME_KEY + ["nflId", "x", "y"]].rename(columns={"nflId": "nearestOppId", "x": "_dx", "y": "_dy"})
-    m = off.merge(dpos, on=FRAME_KEY + ["nearestOppId"], how="left")
+    dpos = df[_fk(df) + ["nflId", "x", "y"]].rename(columns={"nflId": "nearestOppId", "x": "_dx", "y": "_dy"})
+    m = off.merge(dpos, on=_fk(df) + ["nearestOppId"], how="left")
     inside = np.sign(FIELD_WIDTH / 2 - m["y"]).replace(0, 1)
     lat = (m["_dy"] - m["y"]) * inside
     m["leverageAngle"] = np.degrees(np.arctan2(lat, m["_dx"] - m["x"]))
@@ -131,7 +136,7 @@ def voronoi_areas(frame, clip=True) -> pd.Series:
 def add_voronoi(df) -> pd.DataFrame:
     """Add ``voronoiArea`` for every player-frame (loops over frames)."""
     df = _players(_pd(df))
-    parts = [voronoi_areas(g) for _, g in df.groupby(FRAME_KEY, sort=False)]
+    parts = [voronoi_areas(g) for _, g in df.groupby(_fk(df), sort=False)]
     return df.assign(voronoiArea=pd.concat(parts))
 
 

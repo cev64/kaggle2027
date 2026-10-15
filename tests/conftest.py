@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from bdb.tracking import FIELD_LENGTH, FIELD_WIDTH  # noqa: E402
+from bdb27.tracking import FIELD_LENGTH, FIELD_WIDTH  # noqa: E402
 
 N_FRAMES, SNAP, PASS = 30, 11, 20
 LOS = {1: 40.0, 2: 65.0}  # standardized LOS per playId
@@ -32,7 +32,7 @@ def make_play(game_id: int, play_id: int, direction: str, los: float, seed: int 
             s = float(np.hypot(vx, vy))
             d = float(np.degrees(np.arctan2(vx, vy)) % 360)  # clockwise from +y
             for f in range(1, N_FRAMES + 1):
-                t = (f - 1) * 0.1
+                t = (f - SNAP) * 0.1  # x0/y0 are snap positions
                 rows.append(dict(gameId=game_id, playId=play_id, nflId=nfl, displayName=f"P{nfl}", frameId=f,
                                  jerseyNumber=k + 1, club=club, x_true=x0 + vx * t, y_true=y0 + vy * t,
                                  s=s, a=0.0, dis=s * 0.1, dir_true=d, vx_true=vx, vy_true=vy))
@@ -67,7 +67,7 @@ def plays() -> pl.DataFrame:
 
 
 def to_pl(df: pd.DataFrame) -> pl.DataFrame:
-    from bdb.tracking import normalize_columns
+    from bdb27.tracking import normalize_columns
     return normalize_columns(pl.from_pandas(df.drop(columns=[c for c in df.columns if c.endswith("_true")])))
 
 
@@ -96,3 +96,67 @@ def dirty_pd(clean_pd) -> pd.DataFrame:
 @pytest.fixture
 def dirty(dirty_pd) -> pl.DataFrame:
     return to_pl(dirty_pd)
+
+
+# ----------------------------------------------------------------- BDB 2027 style
+def cut_drill_truth(n: int = 50):
+    """Accelerate along +x, brake into a 90-degree left cut, re-accelerate along +y (drill frame)."""
+    t = np.arange(n) * 0.1
+    s = np.select([t < 1.5, t < 2.0, t < 2.6, t < 2.9],
+                  [4.5 * t, 6.75, 6.75 - (6.75 - 1.75) * (t - 2.0) / 0.6, 1.75],
+                  np.minimum(1.75 + 5 * (t - 2.9), 7.0))
+    head = np.clip((t - 2.6) / 0.3, 0, 1) * 90.0  # math degrees, CCW from +x
+    v = np.c_[s * np.cos(np.radians(head)), s * np.sin(np.radians(head))]
+    pos = np.vstack([[0, 0], np.cumsum(v[:-1] * 0.1, axis=0)])
+    return t, s, head, pos
+
+
+def make_combine(rot_deg: float = 30.0, origin=(30.0, 20.0), with_ball: bool = True) -> pd.DataFrame:
+    """snake_case combine_tracking-like rows: one cut-drill attempt rotated/translated on the field."""
+    t, s, head, pos = cut_drill_truth()
+    th = np.radians(rot_deg)
+    R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
+    xy = pos @ R.T + np.asarray(origin)
+    d = (90 - (head + rot_deg)) % 360  # NGS: clockwise from +y
+    times = pd.Timestamp("2024-03-01T15:00:00") + pd.to_timedelta(t, "s")
+    iso = [ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z" for ts in times]
+    rows = pd.DataFrame({"draft_year": 2024, "event_id": 501, "nfl_id": 777, "entity_type": "PLAYER",
+                         "time": iso, "drill_type": "SKILL_DRILLS_WR", "drill_name": "CUT_TEST", "attempt": 1,
+                         "x": xy[:, 0], "y": xy[:, 1], "s": s, "a": np.abs(np.gradient(s, 0.1)),
+                         "dis": np.r_[0, np.linalg.norm(np.diff(xy, axis=0), axis=1)], "dir": d})
+    if with_ball:
+        ball = rows.assign(nfl_id=None, entity_type="BALL", x=origin[0] + 15, y=origin[1], s=0.0, a=0.0, dis=0.0, dir=np.nan)
+        rows = pd.concat([rows, ball], ignore_index=True)
+    return rows
+
+
+def make_mirror(lag_s: float = 0.3, n: int = 80) -> pd.DataFrame:
+    """Leader (1) shuffles laterally; follower (2) mirrors with a fixed lag."""
+    t = np.arange(n) * 0.1
+    out = []
+    for nfl, shift in ((1, 0.0), (2, lag_s)):
+        y = 2 * np.sin(2 * np.pi * 0.5 * (t - shift))
+        vy = 2 * np.pi * 0.5 * 2 * np.cos(2 * np.pi * 0.5 * (t - shift))
+        out.append(pd.DataFrame({"frameId": np.arange(1, n + 1), "nflId": nfl, "xd": 0.0, "yd": y,
+                                 "s": np.abs(vy)}))
+    return pd.concat(out, ignore_index=True)
+
+
+@pytest.fixture
+def combine_pd() -> pd.DataFrame:
+    return make_combine()
+
+
+@pytest.fixture
+def game_sparse_pd(clean_pd) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """game_tracking-like (2 cohort players per play, no ball, no frame id / direction) + player_play."""
+    keep = clean_pd[clean_pd.nflId.isin([1100, 2105, 1200, 2203])]
+    trk = keep[["gameId", "playId", "nflId", "time", "x", "y", "s", "a", "dis", "o", "dir", "event"]].rename(
+        columns={"gameId": "game_id", "playId": "play_id", "nflId": "nfl_id"}).copy()
+    trk["nfl_id"] = trk["nfl_id"].astype(int)
+    pp = (keep.groupby(["gameId", "playId", "nflId"], as_index=False)[["playDirection", "club"]].first()
+          .rename(columns={"gameId": "game_id", "playId": "play_id", "nflId": "nfl_id",
+                           "playDirection": "play_direction", "club": "team_abbr"}))
+    pp["possession_team"] = "OFF"
+    pp["absolute_yardline_number"] = pp["play_id"].map({1: FIELD_LENGTH - LOS[1], 2: LOS[2]})
+    return trk, pp

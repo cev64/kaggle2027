@@ -106,3 +106,21 @@ def animate_play(play, out_path: str | Path, fps: int = 10, figsize=(12, 5.33), 
     anim.save(out_path, writer=writer)
     plt.close(fig)
     return out_path
+
+
+def plot_trace(traj, x: str = "xd", y: str = "yd", color: str = "s", ax=None, cmap: str = "viridis",
+               label: str | None = None, colorbar: bool = True):
+    """Plot one drill/route trace (e.g. drill-relative ``xd, yd``) colored by ``color`` (speed)."""
+    traj = traj.to_pandas() if hasattr(traj, "to_pandas") and not isinstance(traj, pd.DataFrame) else traj
+    traj = traj.sort_values("frameId")
+    if ax is None:
+        _, ax = plt.subplots(figsize=(6, 6))
+    ax.plot(traj[x], traj[y], color="0.8", lw=1, zorder=1)
+    sc = ax.scatter(traj[x], traj[y], c=traj[color] if color in traj else None, cmap=cmap, s=14, zorder=2,
+                    label=label)
+    if colorbar and color in traj:
+        plt.colorbar(sc, ax=ax, label=color)
+    ax.set_aspect("equal")
+    ax.set_xlabel(f"{x} (yd)")
+    ax.set_ylabel(f"{y} (yd)")
+    return ax

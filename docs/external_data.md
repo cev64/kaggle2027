@@ -9,7 +9,7 @@ python scripts/fetch_external.py --seasons 2025 --datasets pbp participation --r
 ```
 
 ```python
-from bdb import external, keys
+from bdb27 import external, keys
 pbp = external.load("pbp", [2024, 2025])             # polars; fetched + cached on first use
 plays = keys.merge_plays(bdb_plays)                   # gameId/playId -> pbp + participation + FTN
 players = keys.merge_players(bdb_players)             # nflId -> gsis_id, bio, draft

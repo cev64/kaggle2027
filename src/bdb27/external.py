@@ -7,7 +7,7 @@ draft picks) are cached as a single ``data/external/<name>.parquet``.
 
 Typical use::
 
-    from bdb import external
+    from bdb27 import external
     pbp = external.load("pbp", [2023, 2024])        # cached after the first call
     players = external.load("players")
     external.fetch_all([2022, 2023, 2024, 2025])     # warm the whole cache
