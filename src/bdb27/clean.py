@@ -27,9 +27,9 @@ DESCRIPTIONS = {
     "missing_xy": "Rows with null x or y",
     "frame_gaps": "Missing frames inside an entity's trajectory",
     "partial_presence": "Entity present for fewer frames than the play/attempt spans",
-    "impossible_kinematics": "Player s or a above physical limits",
+    "impossible_kinematics": "Player s or a above physical limits, or negative (s, a are unsigned)",
     "teleports": "Frame-to-frame jump too large or inconsistent with `dis`",
-    "out_of_bounds": "Position beyond the field by more than the margin",
+    "out_of_bounds": "Position beyond the field by more than the margin (game data only)",
     "player_counts": "Plays with frames not having 11 per team (+1 ball); skipped for sparse data",
     "event_issues": "Plays with missing/multiple snaps, repeated one-off events or mis-ordered events",
     "event_inconsistent": "Frames whose rows disagree on the event tag",
@@ -65,7 +65,7 @@ def check_missing_xy(df: pl.DataFrame) -> pl.DataFrame:
 def check_frame_gaps(df: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """(gaps, partial): interior missing frames per entity; entities spanning fewer frames than the play."""
     key = play_key(df)
-    d = with_pid(df)
+    d = with_pid(_players(df))
     grp = entity_key(d)
     d = d.select(grp + ["nflId", "frameId"]).unique().sort(grp + ["frameId"])
     gaps = (d.with_columns(nMissing=(pl.col("frameId").diff().over(grp) - 1))
@@ -80,8 +80,9 @@ def check_frame_gaps(df: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
 
 
 def check_kinematics(df: pl.DataFrame, max_s: float = 12.0, max_a: float = 15.0) -> pl.DataFrame:
-    """Player rows with speed > ``max_s`` yd/s or acceleration > ``max_a`` yd/s^2."""
-    conds = [pl.col(c) > m for c, m in (("s", max_s), ("a", max_a)) if c in df.columns]
+    """Player rows with speed > ``max_s`` yd/s, acceleration > ``max_a`` yd/s^2, or either negative
+    (NGS ``a`` is a magnitude; one 2025 game carries signed values)."""
+    conds = [(pl.col(c) > m) | (pl.col(c) < 0) for c, m in (("s", max_s), ("a", max_a)) if c in df.columns]
     if not conds:
         return EMPTY
     return _players(df).filter(pl.any_horizontal(conds)).select(_keys(df) + [c for c in ("s", "a") if c in df.columns])
@@ -110,7 +111,10 @@ def check_teleports(df: pl.DataFrame, max_step: float = 1.5, dis_tol: float = 0.
 
 
 def check_out_of_bounds(df: pl.DataFrame, margin: float = 3.0) -> pl.DataFrame:
-    """Rows more than ``margin`` yd outside the 120 x 53.3 field."""
+    """Rows more than ``margin`` yd outside the 120 x 53.3 field. Combine drills are not run on
+    game-field coordinates (y spans about -11 to 66), so drill data returns no flags."""
+    if "gameId" not in df.columns:
+        return EMPTY
     oob = ((pl.col("x") < -margin) | (pl.col("x") > FIELD_LENGTH + margin)
            | (pl.col("y") < -margin) | (pl.col("y") > FIELD_WIDTH + margin))
     return df.filter(oob).select(_keys(df) + ["x", "y"])
@@ -243,7 +247,8 @@ def _md_table(d: pl.DataFrame, n: int = 10) -> str:
 
 
 def write_qa_markdown(reports: dict[str, dict[str, pl.DataFrame]] | dict[str, pl.DataFrame], path,
-                      stats: dict | None = None, examples: int = 10, title: str = "Tracking data QA report") -> Path:
+                      stats: dict | None = None, examples: int = 10, title: str = "Tracking data QA report",
+                      preamble: str | None = None) -> Path:
     """Write a markdown QA report: summary + first ``examples`` rows per issue.
 
     ``reports`` is one :func:`run_qa` result or ``{section_name: run_qa_result}``.
@@ -253,8 +258,10 @@ def write_qa_markdown(reports: dict[str, dict[str, pl.DataFrame]] | dict[str, pl
     if reports and all(isinstance(v, pl.DataFrame) for v in reports.values()):
         reports = {"": reports}
     parts = [f"# {title}\n", f"_Generated {date.today().isoformat()} by `scripts/build_processed.py`._\n"]
+    if preamble:
+        parts.append(preamble)
     if stats:
-        parts.append("\n".join(f"- **{k}**: {v}" for k, v in stats.items()) + "\n")
+        parts.append("## Processing\n\n" + "\n".join(f"- **{k}**: {v}" for k, v in stats.items()) + "\n")
     for section, report in reports.items():
         h = "##" if not section else "###"
         if section:
@@ -272,6 +279,14 @@ def drop_duplicates(df: pl.DataFrame) -> pl.DataFrame:
     """Keep the first row per (play, entity, frame)."""
     d = with_pid(df)
     return d.unique(subset=entity_key(d) + ["frameId"], keep="first", maintain_order=True).drop("_pid")
+
+
+def fix_negative_accel(df: pl.DataFrame) -> pl.DataFrame:
+    """Replace negative ``a`` with its magnitude (NGS ``a`` is unsigned); adds ``aSignFixed``."""
+    if "a" not in df.columns:
+        return df
+    neg = (pl.col("a") < 0).fill_null(False)
+    return df.with_columns(aSignFixed=neg, a=pl.col("a").abs())
 
 
 def fix_spikes(df: pl.DataFrame, max_step: float = 1.5) -> pl.DataFrame:
@@ -366,7 +381,7 @@ def clean_tracking(df: pl.DataFrame, max_gap: int = 3, max_step: float = 1.5, dr
     Returns ``(cleaned, report)``; ``report`` describes the *raw* input.
     """
     report = run_qa(df, max_step=max_step, counts=counts)
-    out = fill_gaps(fix_spikes(drop_duplicates(df), max_step), max_gap)
+    out = fill_gaps(fix_spikes(fix_negative_accel(drop_duplicates(df)), max_step), max_gap)
     if drop_bad_count_plays and report["player_counts"].height:
         key = play_key(df)
         out = out.join(report["player_counts"].select(key), on=key, how="anti")

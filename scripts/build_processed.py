@@ -35,12 +35,23 @@ def _context(raw: Path) -> pl.DataFrame | None:
     return None
 
 
-def process_file(path: Path, kind: str, raw: Path, out: Path, context, smooth: bool, drill_summary: bool):
+def _games(raw: Path) -> pl.DataFrame | None:
+    try:
+        return T.load_table("games", raw)
+    except FileNotFoundError:
+        return None
+
+
+def process_file(path: Path, kind: str, raw: Path, out: Path, context, smooth: bool, drill_summary: bool,
+                 games=None):
     """Clean + prepare one tracking file; returns (section name, QA report, stats)."""
     t0 = time.time()
     df = T.cached_frame(path, out / "cache").collect()
     cleaned, report = C.clean_tracking(df)
-    prepared = T.prepare_tracking(cleaned, None if kind == "combine_tracking" else context)
+    del df
+    combine = kind == "combine_tracking"
+    prepared = T.prepare_tracking(cleaned, None if combine else context, None if combine else games)
+    del cleaned
     if smooth:
         cols = ("xd", "yd") if "xd" in prepared.columns else ("x", "y")
         prepared = C.smooth_kinematics(prepared, cols=cols)
@@ -49,8 +60,9 @@ def process_file(path: Path, kind: str, raw: Path, out: Path, context, smooth: b
     if kind == "combine_tracking" and drill_summary:
         from bdb27.drills import drill_summary as summarize
         summarize(prepared).to_parquet(out / "combine_drill_summary.parquet")
-    key = T.play_key(df)
-    stats = {"rows": df.height, "plays/attempts": df.select(key).n_unique(), "rows after cleaning": prepared.height,
+    key = T.play_key(prepared)
+    raw_rows = T.cached_frame(path, out / "cache").select(pl.len()).collect().item()
+    stats = {"rows": raw_rows, "plays/attempts": prepared.select(key).n_unique(), "rows after cleaning": prepared.height,
              "output": str(dest.relative_to(ROOT)) if dest.is_relative_to(ROOT) else str(dest),
              "seconds": round(time.time() - t0, 1)}
     print(f"  {path.name}: {stats}")
@@ -77,16 +89,23 @@ def main(argv=None) -> int:
               "game_tracking_2023.csv (BDB 2027) or tracking_week_1.csv (BDB 2025).", file=sys.stderr)
         return 1
     args.out.mkdir(parents=True, exist_ok=True)
-    context = _context(args.raw)
+    context, games = _context(args.raw), _games(args.raw)
     reports, stats = {}, {}
     for kind in kinds:
         print(f"[{kind}]")
         for path in found[kind][: args.limit]:
             name, rep, st = process_file(path, kind, args.raw, args.out, context,
-                                         not args.no_smooth, not args.no_drill_summary)
+                                         not args.no_smooth, not args.no_drill_summary, games)
             reports[name] = rep
             stats.update({f"{name} {k}": v for k, v in st.items() if k != "seconds"})
-    C.write_qa_markdown(reports, args.report, stats=stats)
+    notes = ROOT / "docs/data_notes.md"
+    preamble = notes.read_text() + "\n" if notes.exists() else ""
+    try:
+        from bdb27.profile import profile_markdown
+        preamble += profile_markdown(args.raw, args.out / "cache")
+    except Exception as e:  # profile is informative only
+        print(f"profile skipped: {e}", file=sys.stderr)
+    C.write_qa_markdown(reports, args.report, stats=stats, preamble=preamble)
     print(f"QA report -> {args.report}")
     return 0
 

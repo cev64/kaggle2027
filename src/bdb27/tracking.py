@@ -3,10 +3,13 @@
 Schema-tolerant across layouts; all columns are normalized to camelCase
 (``game_id`` -> ``gameId``):
 
-* BDB 2027: ``combine_tracking.csv`` (one *drill attempt* per ``eventId``; PLAYER/BALL
-  entities; no orientation, no frame id) and ``game_tracking_<season>.csv``
-  (cohort players only, no ball/opponents, no frame id or play direction; the
-  direction comes from ``player_play.csv``).
+* BDB 2027: ``combine_tracking.csv`` (one *player drill attempt* per ``eventId``: a
+  single prospect plus, on route/catch drills, a BALL entity carrying the same
+  ``nflId``; no orientation, no frame id; ``attempt`` counts reps within a
+  ``drillType`` session, not within a drill) and ``game_tracking_<season>.csv``
+  (cohort players only, no ball/opponents, no frame id or play direction; about
+  1 s before the snap onward; PRE, REG and POST games). Direction, possession and
+  LOS come from ``player_play.csv``; season type from ``games.csv``.
 * BDB 2025: ``tracking_week_N.csv`` (22 players + football, ``frameId``, ``frameType``).
 * BDB 2026: ``train/input_2023_wNN.csv`` / ``output_2023_wNN.csv``.
 
@@ -41,8 +44,15 @@ _DTYPES = {
     **{c: pl.Float32 for c in ("x", "y", "s", "a", "dis", "o", "dir",
                                "ballLandX", "ballLandY", "absoluteYardlineNumber")},
     **{c: pl.Categorical for c in ("club", "playDirection", "frameType", "event", "displayName",
-                                   "playerRole", "playerSide", "playerPosition", "entityType",
+                                   "playerRole", "playerSide", "playerPosition", "entityType", "seasonType",
                                    "drillType", "drillName")},
+}
+# Same drill recorded under different names across Combine years.
+DRILL_ALIASES = {
+    "PASS_PRO-MIRROR_DRILL": "PASS_PRO_MIRROR_DRILL",  # 2024-25 spelling
+    "LINE": "LINE_DRILL",  # 2023
+    "OVER_THE_SHOULDER_ADJUST": "OVER_SHOULDER_ADJUST",  # TE 2023
+    "SPEED_OUT_LEFT": "SPEED_OUT_ROUTE_LEFT",  # 2024
 }
 TRACKING_KINDS = ("combine_tracking", "game_tracking", "tracking", "input", "output")
 _TABLE_STEMS = {
@@ -108,7 +118,15 @@ def normalize_columns(df):
             if c in cols:
                 ball = ball | (pl.col(c).cast(pl.String).str.to_lowercase() == "football").fill_null(False)
         df = df.with_columns(isBall=ball.fill_null(False))
+    if "drillName" in cols and "drillCanon" not in cols:
+        df = df.with_columns(drillCanon=canonical_drill(pl.col("drillName")))
     return df
+
+
+def canonical_drill(expr: pl.Expr) -> pl.Expr:
+    """Map year-specific drill spellings onto one name (see ``DRILL_ALIASES``)."""
+    s = expr.cast(pl.String)
+    return s.replace(DRILL_ALIASES).cast(pl.Categorical)
 
 
 def add_frame_ids(df):
@@ -246,6 +264,33 @@ def stitch_2026(inp: pl.DataFrame, out: pl.DataFrame) -> pl.DataFrame:
 
 
 # ---------------------------------------------------------------- game standardization
+def add_absolute_yardline(plays: pl.DataFrame) -> pl.DataFrame:
+    """Derive raw-coordinate LOS ``absoluteYardlineNumber`` when only yardline fields exist.
+
+    BDB 2027 ``player_play`` has ``yardlineSide`` (null at midfield), ``yardlineNumber``,
+    ``possessionTeam`` and ``playDirection``. Distance from the offense's own goal is
+    ``yardlineNumber`` on its own side, else ``100 - yardlineNumber``; the LOS is at
+    ``x = 10 + d`` when the offense moves right and ``110 - d`` when it moves left.
+    """
+    need = {"yardlineNumber", "possessionTeam", "playDirection"}
+    if "absoluteYardlineNumber" in plays.columns or not need <= set(plays.columns):
+        return plays
+    side = pl.col("yardlineSide").cast(pl.String) if "yardlineSide" in plays.columns else pl.lit(None, pl.String)
+    own = (side == pl.col("possessionTeam").cast(pl.String)).fill_null(True)  # null side = the 50
+    d = pl.when(own).then(pl.col("yardlineNumber")).otherwise(100 - pl.col("yardlineNumber"))
+    right = pl.col("playDirection").cast(pl.String).str.to_lowercase() == "right"
+    return plays.with_columns(absoluteYardlineNumber=pl.when(right).then(10 + d).otherwise(110 - d).cast(pl.Float32))
+
+
+def attach_game_info(df: pl.DataFrame, games: pl.DataFrame) -> pl.DataFrame:
+    """Left-join ``season``, ``seasonType`` (PRE/REG/POST) and ``week`` from games.csv."""
+    games = normalize_columns(games)
+    cols = [c for c in ("season", "seasonType", "week") if c in games.columns and c not in df.columns]
+    if not cols:
+        return df
+    return df.join(games.select(["gameId"] + cols), on="gameId", how="left")
+
+
 def attach_play_context(df: pl.DataFrame, plays: pl.DataFrame, cols=None) -> pl.DataFrame:
     """Left-join play context (direction, possession, LOS, down, ...) onto tracking.
 
@@ -253,7 +298,7 @@ def attach_play_context(df: pl.DataFrame, plays: pl.DataFrame, cols=None) -> pl.
     player_play.csv). For the latter, player-level ``club``/``linedUpPosition`` are
     joined on nflId and play-level columns reduced to one row per play.
     """
-    plays = normalize_columns(plays)
+    plays = add_absolute_yardline(normalize_columns(plays))
     if "nflId" in plays.columns and "nflId" in df.columns:
         pcols = [c for c in ("club", "linedUpPosition") if c in plays.columns and c not in df.columns]
         if pcols:
@@ -431,7 +476,8 @@ def normalize_drill(df: pl.DataFrame, min_disp: float = 2.0, mirror: bool = Fals
 
 
 # ---------------------------------------------------------------------- pipeline
-def prepare_tracking(df: pl.DataFrame, plays: pl.DataFrame | None = None) -> pl.DataFrame:
+def prepare_tracking(df: pl.DataFrame, plays: pl.DataFrame | None = None,
+                     games: pl.DataFrame | None = None) -> pl.DataFrame:
     """Normalize -> context -> side -> standardize -> kinematics -> snap -> LOS (game data),
     or normalize -> kinematics -> drill coordinates (Combine data). Steps whose inputs
     are missing are skipped with a warning."""
@@ -440,6 +486,8 @@ def prepare_tracking(df: pl.DataFrame, plays: pl.DataFrame | None = None) -> pl.
         df = add_frame_ids(df)
     if "eventId" in df.columns and "gameId" not in df.columns:
         return normalize_drill(add_kinematics(df))
+    if games is not None:
+        df = attach_game_info(df, games)
     if plays is not None:
         df = attach_play_context(df, plays)
     try:

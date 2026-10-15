@@ -137,3 +137,22 @@ def test_drill_mirror():
     out = T.normalize_drill(df, mirror=True).sort("frameId")
     assert out["drillMirrored"].all() and out["yd"][-1] > 5
     assert out["dird"][-1] == pytest.approx(0, abs=1e-3)
+
+
+def test_absolute_yardline_from_player_play_fields():
+    pp = pl.DataFrame({"game_id": [1, 1, 1, 1], "play_id": [1, 2, 3, 4],
+                       "possession_team": ["KC", "KC", "KC", "KC"],
+                       "yardline_side": ["KC", "DET", None, "KC"], "yardline_number": [25, 30, 50, 25],
+                       "play_direction": ["right", "right", "left", "left"]})
+    out = T.add_absolute_yardline(T.normalize_columns(pp))
+    # own 25 moving right -> x=35; opp 30 moving right -> 80; midfield -> 60; own 25 moving left -> 85
+    assert out["absoluteYardlineNumber"].to_list() == pytest.approx([35, 80, 60, 85])
+
+
+def test_canonical_drill_and_game_info():
+    df = T.normalize_columns(pl.DataFrame({"event_id": ["a", "b"], "drill_name": ["PASS_PRO-MIRROR_DRILL", "LINE"]}))
+    assert df["drillCanon"].cast(pl.String).to_list() == ["PASS_PRO_MIRROR_DRILL", "LINE_DRILL"]
+    trk = pl.DataFrame({"gameId": [10, 11], "x": [1.0, 2.0]})
+    games = pl.DataFrame({"game_id": [10, 11], "season": [2024, 2024], "season_type": ["PRE", "REG"], "week": [1, 3]})
+    out = T.attach_game_info(trk, games)
+    assert out["seasonType"].cast(pl.String).to_list() == ["PRE", "REG"] and out["week"].to_list() == [1, 3]

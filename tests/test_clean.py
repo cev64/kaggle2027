@@ -93,3 +93,16 @@ def test_markdown_report(tmp_path, dirty):
     p = C.write_qa_markdown({"game": C.run_qa(dirty)}, tmp_path / "qa.md", stats={"rows": dirty.height})
     text = p.read_text()
     assert "### Summary" in text and "teleports" in text and "| issue |" in text
+
+
+def test_negative_accel_flagged_and_fixed(clean):
+    bad = clean.with_columns(a=pl.when((pl.col("nflId") == 1101) & (pl.col("frameId") == 3)).then(-2.0)
+                             .otherwise(pl.col("a")))
+    assert flagged(C.check_kinematics(bad)) == {1101}
+    fixed = C.fix_negative_accel(bad)
+    assert fixed["a"].min() >= 0 and fixed["aSignFixed"].sum() == 1
+
+
+def test_out_of_bounds_skipped_for_drills():
+    drill = pl.DataFrame({"eventId": ["e"], "nflId": [1], "frameId": [1], "x": [5.0], "y": [-11.0]})
+    assert C.check_out_of_bounds(drill).height == 0
