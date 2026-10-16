@@ -60,7 +60,23 @@ Points are estimates and bars are 95% CIs.*
 
 ## Result 2: what explains the shrinkage
 
-[TBD from docs/shrinkage.md: role, draft capital, experience, usage, fatigue moderators. 1 figure + 2-3 bullets.]
+![shrinkage](../fig/shrinkage.png)
+*Figure 3. Left: transfer by how fast a player's game frames are; Combine speed mostly separates players only in
+rare all-out moments. Right: even a player's fastest 0.1% of game frames reach just 73–85% of his Combine top
+speed, and the fastest testers leave slightly more unused.*
+
+**Headroom, not noise.** Combine measurement error explains only 1–7% of the shortfall, because v<sub>max</sub>
+reliability would have to be about 0.3–0.4 to explain all of it. What explains it is that the game rarely asks for
+top speed. Receivers and DBs top out at about 82–85% of their Combine top speed, and DL at about 74%, even on
+their single fastest moments. Combine speed separates players mainly in those rare all-out frames (elasticity
+about 0.5 at the 99.9th percentile of a player's frames). For DB and DL it barely ranks typical game speed
+(90th percentile: 0.12 and −0.17). Speed on Sundays is set by the play, not the engine.
+
+**A stable discount.** We tested 80 moderator interactions, and none survives a false-discovery correction
+(smallest q = 0.17). Within the same player, transfer does not rise from the rookie year to years 2–3 (WR
++0.12 [−0.15, 0.38]). It does not depend on draft round. It does not fade in the fourth quarter or in blowouts.
+One exploratory lead: edge rushers and high-snap DL appear to keep more of their speed than interior or
+rotational linemen.
 
 ## Result 3: where speed pays, within the same player
 
