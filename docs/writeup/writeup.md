@@ -3,7 +3,7 @@
 *NFL Big Data Bowl 2027, Combine to NFL Performance*
 
 ![hero](../fig/hero.gif)
-*Figure 1. [TBD caption: two receivers' Combine 40 speed traces (left) beside their fastest regular-season vertical reps (right).]*
+*Figure 1. Xavier Legette and Keon Coleman, picks 32 and 33 in 2024. Legette's 10.9% Combine top-speed edge (left) shrinks to 4.6% on their fastest regular-season vertical routes (right): 36 cents on the dollar, close to the receiver estimates.*
 
 ## The question every scout already asks
 
@@ -15,8 +15,8 @@ The 2027 data closes that loop for the first time: the same 510 prospects were t
 Combine and in every regular-season snap of 2023–2025. We use it to measure a **translation rate**: for every
 1% of Combine top speed a prospect has over a peer at his position, how much faster is he in NFL games?
 
-**At best about 0.4%. Within a position, a Combine speed edge is worth at most forty cents on the dollar, and for
-defensive backs and linemen on everyday plays, close to nothing.**
+**About 0.4%. Within a position, a Combine speed edge is worth roughly forty cents on the dollar (0.3–0.6 across
+positions and definitions of game speed). For defensive backs and linemen on everyday plays, it is worth close to nothing.**
 
 ## Data and approach
 
@@ -41,7 +41,7 @@ elasticity: 1 means Combine differences show up in full, and 0 means they vanish
 *Figure 2. Combine-to-game elasticity of top speed by position group, under three definitions of game speed.
 Points are estimates and bars are 95% CIs.*
 
-## Result 1: speed edges shrink by more than half
+## Result 1: speed edges shrink, typically by half or more
 
 | Group | All reps (snap → throw) | Long reps (≥ 3.5 s) | Whole play, fastest 0.1% |
 |---|---|---|---|
@@ -69,13 +69,14 @@ speed, and the fastest testers leave slightly more unused.*
 **Headroom, not noise.** Combine measurement error explains only 1–7% of the shortfall, because v<sub>max</sub>
 reliability would have to be about 0.3–0.4 to explain all of it. What explains it is that the game rarely asks for
 top speed. Receivers and DBs top out at about 82–85% of their Combine top speed, and DL at about 74%, even on
-their single fastest moments. Combine speed separates players mainly in those rare all-out frames (elasticity
-about 0.5 at the 99.9th percentile of a player's frames). For DB and DL it barely ranks typical game speed
+their single fastest moments. For DB and DL, Combine speed separates players mainly in those rare all-out frames
+(elasticity about 0.5 at the 99.9th percentile of a player's frames). For DB and DL it barely ranks typical game speed
 (90th percentile: 0.12 and −0.17). Speed on Sundays is set by the play, not the engine.
 
 **A stable discount.** We tested 80 moderator interactions, and none survives a false-discovery correction
 (smallest q = 0.17). Within the same player, transfer does not rise from the rookie year to years 2–3 (WR
-+0.12 [−0.15, 0.38]). It does not depend on draft round. It does not fade in the fourth quarter or in blowouts.
++0.12 [−0.15, 0.38]). It does not depend on draft round. The gap between fast and slow players does not close in the fourth quarter
+or in blowouts.
 One exploratory lead: edge rushers and high-snap DL appear to keep more of their speed than interior or
 rotational linemen.
 
@@ -137,7 +138,7 @@ hour. Examples: Luther Burden projected 17.8 mph vs 18.0 actual, and Arian Smith
 
 We tested whether tracking-derived capacity (top speed, 2–10 yd burst) predicts game speed, separation over
 expected, target rate or pressure *beyond* draft slot, the official forty and size. With 60–85 players per
-group, it does not: every ΔR² is within ±0.03 of zero. The tracked 40 is not a better stopwatch. Its value is
+group, it does not: no tracking measure improves on that baseline (best ΔR² +0.03). The tracked 40 is not a better stopwatch. Its value is
 that it is **on the same scale as game tracking**, which is what makes a translation rate measurable at all.
 We also report what did not survive:
 - the 2–10 yd "burst" is unreliable within receivers (retest ICC 0.15);
@@ -150,7 +151,8 @@ We also report what did not survive:
   speed. For DB and DL, project game speed from weight and role, not 40 speed. Among receivers, put the speed
   premium on vertical stems, where faster reps actually earn separation.
 - **In season, week to week.** Track each player's game top speed against his own Sunday Speed projection. A
-  sustained drop below projection is a monitoring flag for soft-tissue or return-to-play cases.
+  sustained drop below projection could flag soft-tissue or return-to-play cases. This use is proposed, not
+  validated here.
 - **Development.** For DL, get-off is the speed lever that pays (pressure per SD of quicker first step).
 
 ## Limitations
