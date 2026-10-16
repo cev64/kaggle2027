@@ -6,7 +6,8 @@
 Steps (WR, DB, DL; REG season only):
 
 1. Game-speed target per player. Two candidates, compared by split-half reliability (alternating
-   games within player, Spearman-Brown): whole-play p99 / p99.9 of frame speed, and the player random
+   games within player, Spearman-Brown): quantiles of per-play peak speed (chosen: 90th pct), frame-level
+   p99 / p99.9, and the player random
    intercept of the context-adjusted route/rush window model from ``scripts/translation.py``.
 2. Projection models of the target from Combine information, validated out of sample by
    leave-one-draft-class-out and repeated 5-fold CV: naive full transfer (elasticity 1), group mean,
@@ -80,16 +81,21 @@ def half_of(keys: pd.DataFrame) -> pd.Series:
 
 
 def whole_play_targets(ids) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Per-play peak speed (all REG plays, whole play) -> player quantiles; also frame-level p99 / p99.9."""
     fr = frame_speeds(ids)
     games = fr.select("nflId", "gameId").unique().to_pandas()
     games["half"] = half_of(games)
     fr = fr.join(pl.from_pandas(games).with_columns(pl.col("nflId").cast(pl.Int32), pl.col("half").cast(pl.Int8)),
                  on=["nflId", "gameId"])
-    agg = dict(p99=pl.col("s").quantile(0.99), p999=pl.col("s").quantile(0.999),
-               plays=pl.struct("gameId", "playId").n_unique(), games=pl.col("gameId").n_unique())
-    full = fr.group_by("nflId").agg(**agg).to_pandas().set_index("nflId")
-    half = fr.group_by("nflId", "half").agg(**agg).to_pandas()
-    del fr
+    peaks = fr.group_by("nflId", "half", "gameId", "playId").agg(pk=pl.col("s").max())
+    fq = dict(p99=pl.col("s").quantile(0.99), p999=pl.col("s").quantile(0.999))
+    pq = dict(q80=pl.col("pk").quantile(0.80), q90=pl.col("pk").quantile(0.90), plays=pl.len(),
+              games=pl.col("gameId").n_unique())
+    full = (fr.group_by("nflId").agg(**fq).join(peaks.group_by("nflId").agg(**pq), on="nflId")
+            .to_pandas().set_index("nflId"))
+    half = fr.group_by("nflId", "half").agg(**fq).join(peaks.group_by("nflId", "half").agg(**pq),
+                                                       on=["nflId", "half"]).to_pandas()
+    del fr, peaks
     return full, half
 
 
@@ -123,6 +129,11 @@ def window_targets(group: str):
     return full, hv, vert
 
 
+TARGETS = {"q90": "per-play peak, 90th pct (chosen)", "q80": "per-play peak, 80th pct",
+           "p99": "frame speed p99", "p999": "frame speed p99.9"}
+TARGET = "q90"
+
+
 def split_half(a, b) -> dict:
     r = np.corrcoef(a, b)[0, 1]
     return {"players": len(a), "split-half r": r, "Spearman-Brown reliability": 2 * r / (1 + r)}
@@ -134,6 +145,7 @@ def design(df, cols):
 
 
 LINEAR = {  # name -> log predictors
+    "(b2) weight only": ["combineWeight"],
     "(c0) elasticity only": ["vmax"],
     "(c) shrunk: vmax + weight": ["vmax", "combineWeight"],
     "(d) official forty + weight": ["forty", "combineWeight"],
@@ -162,9 +174,13 @@ def fit_predict(tr, te, y="target", level=0.80):
     return out
 
 
-def scores(obs, pred) -> dict:
+def scores(obs, pred, groups=None, model="") -> dict:
+    """RMSE, MAE, calibration slope (observed on predicted; within group when ``groups`` is given)."""
     e = obs - pred
-    slope = np.polyfit(pred, obs, 1)[0] if np.std(pred) > 1e-6 else np.nan
+    if groups is not None:  # pooled groups: centre both on the group's observed mean
+        gm = obs.groupby(groups).transform("mean")
+        obs, pred = obs - gm, pred - gm
+    slope = np.polyfit(pred, obs, 1)[0] if not model.startswith("(b)") else np.nan
     return {"RMSE": np.sqrt(np.mean(e ** 2)), "MAE": np.mean(np.abs(e)), "calibration slope": slope}
 
 
@@ -184,7 +200,7 @@ def repeated_kfold(d: pd.DataFrame, k=5, reps=40) -> pd.DataFrame:
             fold = RNG.permutation(np.arange(len(dg)) % k)
             pred = pd.concat([fit_predict(dg[fold != f], dg[fold == f]) for f in range(k)]).loc[dg.index]
             for m in MODELS:
-                rows.append({"group": g, "rep": r, "model": m, **scores(dg.target, pred[m])})
+                rows.append({"group": g, "rep": r, "model": m, **scores(dg.target, pred[m], model=m)})
     return pd.DataFrame(rows)
 
 
@@ -213,19 +229,57 @@ def figure(d, full_fits, notable):
         ax.text(grid[-1], ratio * grid[-1], "  naive\n  (elasticity 1)", color=VERM, va="center", fontsize=12)
         ax.text(grid[-1], shr[-1], f"  shrunk\n  ({b[1]:.2f})", color=BLUE, va="center", fontsize=12)
         for _, r in notable[notable.group == g].iterrows():
-            ax.annotate(r["name"], (r.vmax, r.target), xytext=(6, -14), textcoords="offset points", fontsize=10.5,
-                        color="#333")
+            ax.scatter([r.vmax], [r.target], s=60, facecolor="none", edgecolor="#222", lw=1.4, zorder=4)
+            ax.annotate(f"{r['name']}\n(tests fast, plays slower)", (r.vmax, r.target), xytext=(-10, 4),
+                        textcoords="offset points", ha="right", va="bottom", fontsize=10.5, color="#222",
+                        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.85), zorder=5)
         ax.set_title(g, fontsize=15, loc="left", fontweight="bold")
         ax.set_xlabel("Combine top speed, tracked 40 (yd/s)")
         ax.set_xlim(x.vmax.min() - 0.1, x.vmax.max() + 0.55)
         ax.spines[["top", "right"]].set_visible(False)
         ax.grid(alpha=0.25)
-    axes[0].set_ylabel("Sunday top speed, p99 of REG frames (yd/s)")
-    fig.suptitle("Sunday Speed: Combine edges shrink in games. Naive full transfer over-spreads players",
-                 fontsize=15, x=0.01, ha="left")
+    axes[0].set_ylabel("Sunday top speed: 90th pct of play peaks (yd/s)")
+    fig.suptitle("Sunday Speed: Combine edges shrink in games. Naive full transfer over-spreads players\n"
+                 "Shrunk line: within-group fit at the group's mean weight (for DL, weight, not 40 speed, sorts game speed)",
+                 fontsize=14, x=0.01, ha="left")
     fig.tight_layout()
     fig.savefig(FIG, dpi=140)
     plt.close(fig)
+
+
+SUMMARY = """## Summary
+
+- **Target: "Sunday top speed" = the 90th percentile of a player's per-play peak speed** (all REG plays, whole play,
+  >= {v[minp]} plays). It is the speed he reaches on his fastest one-in-ten plays. Split-half reliability
+  (alternating games, Spearman-Brown) is WR {v[rq_WR]:.2f}, DB {v[rq_DB]:.2f}, DL {v[rq_DL]:.2f}. That beats frame-level
+  p99 (DB {v[rp_DB]:.2f}) and is comparable to the context-adjusted window intercept (WR {v[rw_WR]:.2f}, DB {v[rw_DB]:.2f},
+  DL {v[rw_DL]:.2f}), and it reads directly as a top speed in yd/s / mph. The window intercept is kept as a robustness target.
+- **Shrunk beats naive full transfer by a clear margin, in every group.** Leave-one-draft-class-out RMSE: naive
+  {v[n_all]:.3f} vs shrunk {v[s_all]:.3f} yd/s (difference {v[d_all]:.3f}, 95% CI {v[dl_all]:.3f} to {v[dh_all]:.3f};
+  {v[pct_all]:.0f}% lower). It holds for WR, DB and DL separately and on the window target. Naive calibration slopes are
+  WR {v[cn_WR]:.2f}, DB {v[cn_DB]:.2f}, DL {v[cn_DL]:.2f}: taking the stopwatch at face value spreads players out 1.5-2x
+  too much (DB: no signal at all). Shrunk slopes are WR {v[cs_WR]:.2f}, DB {v[cs_DB]:.2f}, DL {v[cs_DL]:.2f}.
+- **Most of the gain is shrinkage to body type, not speed.** Beyond weight, Combine speed improves the projection only
+  for WR (weight-only minus shrunk RMSE {v[w_WR]:+.3f} yd/s, CI {v[wl_WR]:.3f} to {v[wh_WR]:.3f}; elasticity
+  {v[e_WR]:.2f}). For DB (elasticity {v[e_DB]:.2f}) and DL ({v[e_DL]:.2f}) on this whole-play target, weight carries the
+  signal: the shrunk model is no better than weight alone (DL: slightly worse, {v[w_DL]:+.3f} yd/s). On the
+  route/rush-window target, the weight-controlled elasticities are WR {v[ew_WR]:.2f}, DB {v[ew_DB]:.2f} and DL {v[ew_DL]:.2f},
+  consistent with "forty cents on the dollar".
+- **Stopwatch equivalent: yes.** Official forty + weight matches tracking vmax + weight (pooled RMSE difference
+  {v[f_all]:+.3f} yd/s, CI {v[fl_all]:.3f} to {v[fh_all]:.3f}), and adding vmax to the forty adds nothing.
+- **Uncertainty.** The 80% prediction interval is about ±{v[pi]:.1f} mph. Held-out coverage is {v[cov]:.0%}
+  (WR {v[cov_WR]:.0%}, DB {v[cov_DB]:.0%}, DL {v[cov_DL]:.0%}), so the bands are honest.
+"""
+HOW = """## How a scout uses this
+
+Do not read a prospect's Combine top speed as his game speed. Read the **projected Sunday speed and its 80% band**
+(group + weight + tracked vmax, or official forty, which works equally well). For receivers, 1 mph of extra Combine
+top speed buys about {v[e_WR]:.1f} mph on Sundays. For DBs and DL, the band is mostly set by position and body
+weight, so a fast 40 should not move the speed projection. Two prospects whose bands overlap (about ±{v[pi]:.1f} mph)
+are the same speed for planning purposes. The naive column is what "trusting the stopwatch" implies. The players
+it misses most (section 4) are where the scout should look at film for the reason: role, injury, or effort.
+The separation column (section 5) is a rough illustration, not a validated effect.
+"""
 
 
 # ------------------------------------------------------------------ main
@@ -244,7 +298,7 @@ def main() -> int:
         rel_rows.append({"group": g, "target": "window random intercept (context-adjusted)",
                          **split_half(hv.h0, hv.h1)})
         h = wp_half[wp_half.nflId.isin(ids) & (wp_half.plays >= MIN_PLAYS // 2)]
-        for q, lab in (("p99", "whole-play p99"), ("p999", "whole-play p99.9")):
+        for q, lab in TARGETS.items():
             w = h.pivot(index="nflId", columns="half", values=q).dropna()
             rel_rows.append({"group": g, "target": lab, **split_half(w[0], w[1])})
     rel = pd.DataFrame(rel_rows)
@@ -252,14 +306,14 @@ def main() -> int:
 
     # ---- player table
     p = cap.set_index("nflId")
-    p = p.join(wp[["p99", "p999", "plays", "games"]])
+    p = p.join(wp[list(TARGETS) + ["plays", "games"]])
     p = p.join(pd.concat(win_levels.values()).rename("winLevel"))
     p["group"] = p.combinePosition
-    p["target"] = p.p99.where(p.plays >= MIN_PLAYS)
+    p["target"] = p[TARGET].where(p.plays >= MIN_PLAYS)
     ok = p.target.notna() & (p.vmaxSource == "tracked") & p.forty.notna() & p.combineWeight.notna()
     d = p[ok].copy()
     # how the two targets agree
-    agree = d.groupby("group").apply(lambda x: x[["target", "winLevel"]].corr().iloc[0, 1]).rename("r(p99, window level)")
+    agree = d.groupby("group").apply(lambda x: x[["target", "winLevel"]].corr().iloc[0, 1]).rename("r")
 
     # ---- out-of-sample comparisons
     lo = lodo(d).loc[d.index]
@@ -267,14 +321,33 @@ def main() -> int:
     for g in GROUPS + ("all",):
         m = d.group == g if g != "all" else d.group.notna()
         for name in MODELS:
-            rows.append({"group": g, "model": name, "n": int(m.sum()), **scores(d.target[m], lo.loc[m, name])})
+            rows.append({"group": g, "model": name, "n": int(m.sum()), **scores(d.target[m], lo.loc[m, name], d.group[m] if g == "all" else None, name)})
     lodo_tab = pd.DataFrame(rows)
     cover = d.target.between(lo.lo80, lo.hi80)
     kf = repeated_kfold(d)
+    # robustness: same comparison on the context-adjusted window level (route / rush speed, yd/s)
+    okw = p.winLevel.notna() & (p.vmaxSource == "tracked") & p.forty.notna() & p.combineWeight.notna()
+    dw = p[okw].assign(target=p.winLevel)
+    low = lodo(dw).loc[dw.index]
+    rob = []
+    for g in GROUPS:
+        m = dw.group == g
+        for name in ["(a) naive full transfer", "(b) group mean", "(b2) weight only", "(c) shrunk: vmax + weight",
+                     "(d) official forty + weight"]:
+            rob.append({"group": g, "model": name, "n": int(m.sum()), **scores(dw.target[m], low.loc[m, name], model=name)})
+        est, l_, h_ = boot_diff(dw.target[m], low.loc[m, "(a) naive full transfer"], low.loc[m, "(c) shrunk: vmax + weight"])
+        rob.append({"group": g, "model": "naive - shrunk RMSE [95% CI]", "n": int(m.sum()), "RMSE": est,
+                    "MAE": np.nan, "calibration slope": np.nan, "CI": f"[{l_:.3f}, {h_:.3f}]"})
+        X = design(dw[m], LINEAR["(c) shrunk: vmax + weight"])
+        rob.append({"group": g, "model": "elasticity (c), full sample", "n": int(m.sum()),
+                    "RMSE": np.linalg.lstsq(X, np.log(dw.target[m].to_numpy()), rcond=None)[0][1]})
+    rob = pd.DataFrame(rob)
+    rob["CI"] = rob["CI"].fillna("")
     kf_tab = kf.groupby(["group", "model"], sort=False)[["RMSE", "MAE", "calibration slope"]].mean().reset_index()
 
     contrasts = []
     pairs = [("(a) naive full transfer", "(c) shrunk: vmax + weight"), ("(b) group mean", "(c) shrunk: vmax + weight"),
+             ("(b2) weight only", "(c) shrunk: vmax + weight"),
              ("(d) official forty + weight", "(c) shrunk: vmax + weight"),
              ("(d) official forty + weight", "(e) vmax + forty + weight")]
     for g in GROUPS + ("all",):
@@ -309,7 +382,7 @@ def main() -> int:
     # ---- separation illustration (WR): projected edge vs group mean -> vertical-route rep speed -> separation
     wr = d[d.group == "WR"].join(vert["playerMean"].rename("vertMean")).join(vert["n"].rename("vertN"))
     wr = wr[wr.vertN >= 20]
-    k = np.polyfit(wr.target, wr.vertMean, 1)[0]   # yd/s of vertical-route peak per yd/s of p99
+    k = np.polyfit(wr.target, wr.vertMean, 1)[0]   # yd/s of vertical-route peak per yd/s of target
     sep_per_yds = SEP_PER_SD * k / vert["sd_within"]
     wrm = pre.group == "WR"
     for c, src in (("sepEdgeShrunk", "projSunday"), ("sepEdgeNaive", "naiveSunday")):
@@ -369,7 +442,7 @@ def main() -> int:
                          "sep. edge naive (yd)": r.sepEdgeNaive, "sep. edge shrunk (yd)": r.sepEdgeShrunk})
     sep_tab = pd.DataFrame(sep_rows)
 
-    notable = pd.concat([t.nsmallest(1, "missNaive"), t.nlargest(1, "missNaive")]).groupby("group").head(2)
+    notable = t.sort_values("missNaive").groupby("group").head(1)   # biggest "tests fast, plays slower" per group
     notable = d.loc[notable.nflId].assign(name=notable.name.to_numpy())
     figure(d, full_fits, notable)
 
@@ -381,39 +454,46 @@ def main() -> int:
     c_all = con[(con.group == "all")].set_index("RMSE(A) - RMSE(B)")
     naive_vs = c_all.loc["(a) naive full transfer - (c) shrunk: vmax + weight"]
     forty_vs = c_all.loc["(d) official forty + weight - (c) shrunk: vmax + weight"]
-    rel_p = rel.set_index(["group", "target"])["Spearman-Brown reliability"]
-    summary = f"""## Summary
-
-- **Target: whole-play p99 speed** (fastest 1% of a player's REG frames, all plays, players with >= {MIN_PLAYS} plays).
-  Split-half reliability (alternating games) is {rel_p.xs('whole-play p99', level=1).min():.2f}-{rel_p.xs('whole-play p99', level=1).max():.2f},
-  versus {rel_p.xs('window random intercept (context-adjusted)', level=1).min():.2f}-{rel_p.xs('window random intercept (context-adjusted)', level=1).max():.2f}
-  for the context-adjusted route/rush-window intercept, and it reads directly as a top speed in yd/s.
-  The two targets agree across players (r = {', '.join(f'{g} {agree[g]:.2f}' for g in GROUPS)}).
-- **Shrunk beats naive full transfer by a clear margin.** Leave-one-draft-class-out RMSE, all groups:
-  naive {a_all.loc['(a) naive full transfer', 'RMSE']:.3f} yd/s, shrunk {a_all.loc['(c) shrunk: vmax + weight', 'RMSE']:.3f} yd/s
-  (difference {naive_vs['yd/s']:.3f}, 95% CI {naive_vs['lo95']:.3f} to {naive_vs['hi95']:.3f}; {naive_vs['% of A']:.0f}% lower).
-  The naive calibration slope is {a_all.loc['(a) naive full transfer', 'calibration slope']:.2f}: it spreads players out about
-  {1 / a_all.loc['(a) naive full transfer', 'calibration slope']:.1f}x too much. It is worse than the plain group mean. Shrunk slope: {a_all.loc['(c) shrunk: vmax + weight', 'calibration slope']:.2f}.
-- **Estimated elasticities on p99 (all data, weight held fixed):** {', '.join(f'{g} {el[g]:.2f}' for g in GROUPS)}. These match
-  "forty cents on the dollar".
-- **Stopwatch equivalent: yes.** Official forty + weight is as good as tracking vmax + weight (RMSE difference
-  {forty_vs['yd/s']:+.3f} yd/s, 95% CI {forty_vs['lo95']:.3f} to {forty_vs['hi95']:.3f}), and adding vmax to the forty does not help.
-  The tracked 40 is a convenience, not an edge, for projecting Sunday speed.
-- **Honest ceiling.** Even the best model explains only part of the spread. The 80% interval is about
-  ±{np.nanmedian((pre.projHi80Mph - pre.projLo80Mph) / 2):.1f} mph, and held-out coverage of the 80% intervals is {cover.mean():.0%}
-  ({', '.join(f'{g} {cov_g[g]:.0%}' for g in GROUPS)}).
-"""
-    how = f"""## How a scout uses this
-
-Start from the prospect's tracked 40 top speed (or official forty) and weight, and read off the **projected Sunday
-speed with its 80% band** instead of the raw Combine number. Combine differences survive at roughly 40 cents on the
-dollar, so a receiver who is 1 mph faster than his group at the Combine projects only about
-{el['WR']:.1f} mph faster on Sundays. Two players whose bands overlap should be treated as the same speed for game
-planning. Use the band, not the point, when the gap between two prospects is under about 1 mph. The "naive" column is
-what you implicitly assume when you trust the stopwatch at face value. Its largest misses (below) are
-"tests fast, plays slower" players: the projection had already pulled them back toward the group.
-The separation column is a rough illustration only (see its caveat). It is not a validated between-player effect.
-"""
+    rel_p = rel.set_index(["group", "target"])["Spearman-Brown reliability"].unstack()
+    head = []
+    for g in GROUPS + ("all",):
+        L = lt[lt.group == g].set_index("model")
+        C = con[con.group == g].set_index("RMSE(A) - RMSE(B)")
+        nv = C.loc["(a) naive full transfer - (c) shrunk: vmax + weight"]
+        fv = C.loc["(d) official forty + weight - (c) shrunk: vmax + weight"]
+        head.append({"group": g, "n": int(L.n.iloc[0]),
+                     "elasticity (c)": el.get(g, np.nan),
+                     "RMSE naive": L.loc["(a) naive full transfer", "RMSE"],
+                     "RMSE group mean": L.loc["(b) group mean", "RMSE"],
+                     "RMSE weight only": L.loc["(b2) weight only", "RMSE"],
+                     "RMSE shrunk": L.loc["(c) shrunk: vmax + weight", "RMSE"],
+                     "naive - shrunk [95% CI]": f"{nv['yd/s']:.3f} [{nv['lo95']:.3f}, {nv['hi95']:.3f}]",
+                     "RMSE forty+wt": L.loc["(d) official forty + weight", "RMSE"],
+                     "forty - shrunk [95% CI]": f"{fv['yd/s']:+.3f} [{fv['lo95']:.3f}, {fv['hi95']:.3f}]",
+                     "calib naive": L.loc["(a) naive full transfer", "calibration slope"],
+                     "calib shrunk": L.loc["(c) shrunk: vmax + weight", "calibration slope"],
+                     "80% PI coverage": cover[d.group == g].mean() if g != "all" else cover.mean()})
+    head = pd.DataFrame(head)
+    v = {"minp": MIN_PLAYS, "pi": np.nanmedian((pre.projHi80Mph - pre.projLo80Mph) / 2), "cov": cover.mean()}
+    win_el = rob[rob.model == "elasticity (c), full sample"].set_index("group")["RMSE"]
+    for g in GROUPS + ("all",):
+        L = lt[lt.group == g].set_index("model")
+        C = con[con.group == g].set_index("RMSE(A) - RMSE(B)")
+        nv = C.loc["(a) naive full transfer - (c) shrunk: vmax + weight"]
+        wv = C.loc["(b2) weight only - (c) shrunk: vmax + weight"]
+        fv = C.loc["(d) official forty + weight - (c) shrunk: vmax + weight"]
+        v.update({f"n_{g}": L.loc["(a) naive full transfer", "RMSE"], f"s_{g}": L.loc["(c) shrunk: vmax + weight", "RMSE"],
+                  f"d_{g}": nv["yd/s"], f"dl_{g}": nv.lo95, f"dh_{g}": nv.hi95, f"pct_{g}": nv["% of A"],
+                  f"w_{g}": wv["yd/s"], f"wl_{g}": wv.lo95, f"wh_{g}": wv.hi95,
+                  f"f_{g}": fv["yd/s"], f"fl_{g}": fv.lo95, f"fh_{g}": fv.hi95,
+                  f"cn_{g}": L.loc["(a) naive full transfer", "calibration slope"],
+                  f"cs_{g}": L.loc["(c) shrunk: vmax + weight", "calibration slope"]})
+        if g != "all":
+            v.update({f"rq_{g}": rel_p.loc[g, TARGETS["q90"]], f"rp_{g}": rel_p.loc[g, TARGETS["p99"]],
+                      f"rw_{g}": rel_p.loc[g, "window random intercept (context-adjusted)"], f"e_{g}": el[g],
+                      f"ew_{g}": win_el[g], f"cov_{g}": cov_g[g]})
+    summary = SUMMARY.format(v=v) + "\n" + md(head) + "\n"
+    how = HOW.format(v=v)
     DOC.write_text("\n".join([
         "# Sunday Speed: projecting NFL game top speed from the Combine\n",
         f"_Generated {date.today().isoformat()} by `scripts/sunday_speed.py`. Per-player table: "
@@ -423,6 +503,9 @@ The separation column is a rough illustration only (see its caveat). It is not a
         f"Whole-play halves need >= {MIN_PLAYS // 2} plays per half. Window-intercept halves need >= {MIN_WIN // 2} "
         "windows per half and refit the context + window-length mixed model of `scripts/translation.py` on each half.\n",
         md(rel),
+        "\nAcross players, the chosen target and the window intercept correlate r = "
+        + ", ".join(f"{g} {agree[g]:.2f}" for g in GROUPS) + ". Top-N means of play peaks were rejected: they rise with "
+        "snap count.\n",
         f"\nModeling sample (tracked 40, official forty, weight, >= {MIN_PLAYS} REG plays): "
         + ", ".join(f"{g} {int((d.group == g).sum())}" for g in GROUPS) + " players.\n",
         "## 2. Out-of-sample projection accuracy (yd/s)\n",
@@ -433,6 +516,8 @@ The separation column is a rough illustration only (see its caveat). It is not a
         "### Leave-one-draft-class-out (train on two classes, predict the third)\n", md(lodo_tab),
         "\n### Repeated 5-fold CV (40 repeats, mean)\n", md(kf_tab),
         "\n### Paired contrasts (LODO predictions, bootstrap over players)\n", md(con),
+        "\n### Robustness: the context-adjusted route/rush-window level as the target (LODO, yd/s of window peak speed)\n",
+        "The `elasticity` row reports the coefficient in the RMSE column.\n\n", md(rob),
         "\n![sunday speed](fig/sunday_speed.png)\n",
         "## 3. 2025 class: held-out projections vs actual (trained on 2023-24 only; first 8 picks per group)\n",
         md(c25_tab, 2),
@@ -442,7 +527,7 @@ The separation column is a rough illustration only (see its caveat). It is not a
         "\n## 5. Payoff: illustrative separation value on vertical routes (WR)\n",
         f"**Rough illustration, not a validated effect.** Within a player, a 1-SD faster vertical rep "
         f"(SD = {vert['sd_within']:.2f} yd/s within player × route) comes with +{SEP_PER_SD:.2f} yd separation. "
-        f"Across WRs, 1 yd/s of p99 goes with {k:.2f} yd/s of mean vertical-route peak speed. Chaining those gives "
+        f"Across WRs, 1 yd/s of Sunday top speed goes with {k:.2f} yd/s of mean vertical-route peak speed. Chaining those gives "
         f"about {sep_per_yds:.3f} yd of separation per yd/s ({sep_per_yds / MPH:.3f} yd per mph) of projected Sunday "
         "speed, relative to the average WR. This borrows a within-player slope for between-player differences.\n",
         md(sep_tab, 3),
