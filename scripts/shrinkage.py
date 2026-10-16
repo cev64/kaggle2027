@@ -223,7 +223,7 @@ def frame_quantiles(meta: pd.DataFrame, ps: pl.DataFrame) -> dict[str, pd.DataFr
     st = ps.filter(~pl.col("nullified")).select(
         "gameId", "playId", "nflId",
         q4=pl.col("quarter") >= 4, lop=pl.col("margin").abs() >= 14)
-    qs = dict(p50=0.5, p90=0.9, p99=0.99, p999=0.999)
+    qs = dict(p50=0.5, p90=0.9, p99=0.99, p999=0.999, p9999=0.9999)
     aggs = [pl.len().alias("frames"), pl.struct("gameId", "playId").n_unique().alias("plays")] + [
         pl.col("s").quantile(q).alias(k) for k, q in qs.items()] + [
         (pl.col("s") >= 0.90 * pl.col("vmax")).mean().alias("share90"),
@@ -246,7 +246,7 @@ def frame_quantiles(meta: pd.DataFrame, ps: pl.DataFrame) -> dict[str, pd.DataFr
 def pool_seasons(q: pd.DataFrame, by: list[str]) -> pd.DataFrame:
     """Frame-weighted mean of log quantiles across seasons."""
     q = q.copy()
-    cols = ["p50", "p90", "p99", "p999"]
+    cols = ["p50", "p90", "p99", "p999", "p9999"]
     for c in cols:
         q[c] = np.log(q[c])
     for c in cols + ["share90", "share80"]:
@@ -322,7 +322,7 @@ def ceiling(p) -> pd.DataFrame:
     rows = []
     for g in GROUPS:
         x = p[p.combinePosition == g].copy()
-        for q in ("p50", "p90", "p99", "p999"):
+        for q in ("p50", "p90", "p99", "p999", "p9999"):
             m = smf.ols(f"{q} ~ logVmax + logW", x).fit(cov_type="HC1")
             lo, hi = m.conf_int().loc["logVmax"]
             rows.append(dict(group=g, quantile=q, elasticity=m.params["logVmax"], lo95=lo, hi95=hi,
@@ -412,7 +412,7 @@ def main() -> int:
                 tests.append(t)
         # experience: player-season cells, within player
         ps_cells = fq["season"].copy()
-        for c in ("p50", "p90", "p99", "p999"):
+        for c in ("p50", "p90", "p99", "p999", "p9999"):
             ps_cells[c] = np.log(ps_cells[c])
         ps_cells = ps_cells.merge(meta[["nflId", "draftYear"]], on="nflId")
         ps_cells["later"] = (ps_cells.season - ps_cells.draftYear >= 1).astype(int)
@@ -437,14 +437,205 @@ def main() -> int:
     ceil = ceiling(p)
     near = near_capacity(p)
     me = measurement_error(base)
-    pd.to_pickle(dict(tests=tests, res=res, base=base, ceil=ceil, near=near, me=me, p=p),
+    pd.to_pickle(dict(tests=tests, res=res, base=base, ceil=ceil, near=near, me=me),
                  PROC / "eda/shrinkage_results.pkl")
-    print(md(tests))
-    print(md(ceil))
-    print(md(near))
-    print(md(me))
     return 0
 
 
+# ============================================================================ report
+PAIRS = [  # (label, window moderator, window design, whole-play moderator, whole-play design)
+    ("a. role (player majority)", "role", "mixed", "role", "OLS HC1"),
+    ("a. alignment on the play", "alignPlay", "fe", None, None),
+    ("b. draft capital", "draftTier", "mixed", "draftTier", "OLS HC1"),
+    ("c. experience, within player", "expTier", "fe", "later", "player FE"),
+    ("c. experience, between+within", "expTier", "mixed", None, None),
+    ("d. usage tier (median split)", "usageTier", "mixed", "usageTier", "OLS HC1"),
+    ("d. usage, continuous (per SD)", "usageZ", "mixed", "logSPG", "OLS HC1"),
+    ("e. relative 10-yd speed v10rel (per SD)", "v10relZ", "mixed", "v10rel", "OLS HC1"),
+    ("f. Q4/OT vs Q1-3, within player", "gameQ", "fe", "q4", "player FE"),
+    ("f. margin >= 14 vs closer, within player", "marginTier", "fe", "lop", "player FE"),
+    ("f. route depth / deep coverage, within player", "depth", "fe", None, None),
+]
+
+
+def _fmt(e, lo, hi):
+    return f"{e:+.2f} [{lo:+.2f}, {hi:+.2f}]"
+
+
+def summary_table(R) -> pd.DataFrame:
+    res, tests = R["res"], R["tests"]
+    rows = []
+    for label, wm, wd, pm, pd_ in PAIRS:
+        for g in GROUPS:
+            wr = res[(res.group == g) & (res.data == "windows") & (res.moderator == wm) & (res.design == wd)
+                     & (res.kind == "difference")]
+            if wr.empty:
+                continue
+            wt = tests[(tests.group == g) & (tests.data == "windows") & (tests.moderator == wm) & (tests.design == wd)].iloc[0]
+            for _, r in wr.iterrows():
+                row = {"moderator": label, "group": g, "contrast": r.level,
+                       "windows: Δ elasticity [95% CI]": _fmt(r.est, r.lo95, r.hi95),
+                       "windows p": wt.p, "windows q (BH)": wt.q_BH}
+                if pm:
+                    pr = res[(res.group == g) & (res.data == "whole play p999") & (res.moderator == pm)
+                             & (res.design == pd_) & (res.kind == "difference")]
+                    pr = pr[pr.level == r.level] if len(pr) > 1 else pr
+                    pt = tests[(tests.group == g) & (tests.data == "whole play p999") & (tests.moderator == pm)
+                               & (tests.design == pd_)].iloc[0]
+                    if len(pr):
+                        p0 = pr.iloc[0]
+                        row.update({"whole-play p99.9: Δ [95% CI]": _fmt(p0.est, p0.lo95, p0.hi95),
+                                    "whole-play q (BH)": pt.q_BH,
+                                    "same sign": "yes" if np.sign(p0.est) == np.sign(r.est) else "no"})
+                rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def strata_table(R) -> pd.DataFrame:
+    res = R["res"]
+    x = res[(res.kind == "stratum slope") & res.moderator.isin(["role", "draftTier", "expTier", "usageTier"])
+            & res.data.isin(["windows", "whole play p999"])].copy()
+    x["est [95% CI]"] = [_fmt(a, b, c).replace("+", "") for a, b, c in zip(x.est, x.lo95, x.hi95)]
+    x["data"] = x.data.str.replace("whole play p999", "whole-play p99.9")
+    out = x.pivot_table(index=["group", "moderator", "level"], columns="data", values="est [95% CI]", aggfunc="first")
+    n = x[x.data == "windows"].set_index(["group", "moderator", "level"])["players"].rename("players (windows)")
+    out = out.join(n).reset_index()
+    order = {"role": 0, "draftTier": 1, "expTier": 2, "usageTier": 3}
+    out["o"] = out.moderator.map(order)
+    out = out.sort_values(["group", "o"]).drop(columns="o")
+    return out[["group", "moderator", "level", "windows", "whole-play p99.9", "players (windows)"]].fillna("")
+
+
+def figure(R):
+    ceil, near = R["ceil"], R["near"]
+    FIG.parent.mkdir(parents=True, exist_ok=True)
+    cols = {"WR": "#0072B2", "DB": "#E69F00", "DL": "#009E73"}  # Okabe-Ito
+    plt.rcParams.update({"font.size": 13})
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(13, 5.2), gridspec_kw={"width_ratios": [1.15, 1]})
+    qs = ["p90", "p99", "p999", "p9999"]
+    xl = ["90th", "99th", "99.9th", "99.99th"]
+    for k, g in enumerate(GROUPS):
+        c = ceil[(ceil.group == g) & ceil["quantile"].isin(qs)].set_index("quantile").loc[qs]
+        xs = np.arange(len(qs)) + (k - 1) * 0.12
+        a1.errorbar(xs, c.elasticity, yerr=[c.elasticity - c.lo95, c.hi95 - c.elasticity], fmt="o-", color=cols[g],
+                    lw=2.2, ms=8, capsize=0, elinewidth=1.4, alpha=0.95)
+        a1.text(xs[-1] + 0.12, c.elasticity.iloc[-1], g, color=cols[g], fontsize=14, fontweight="bold", va="center")
+    a1.axhline(1, color="#555", ls="--", lw=1)
+    a1.text(-0.25, 1.03, "full transfer", color="#555", fontsize=11)
+    a1.axhline(0, color="#bbb", lw=1)
+    a1.set_xticks(range(len(qs)), xl)
+    a1.set_xlim(-0.4, len(qs) - 0.4)
+    a1.set_xlabel("Percentile of the player's game frame speeds")
+    a1.set_ylabel("Elasticity on Combine vmax\n(weight-controlled, 95% CI)")
+    a1.set_title("Transfer by game-speed percentile", loc="left", fontsize=14)
+    terc = ["slowest third", "middle", "fastest third"]
+    for k, g in enumerate(GROUPS):
+        n = near[near.group == g].set_index("Combine vmax tercile").loc[terc]
+        a2.plot(range(3), n["p99.9 / vmax"] * 100, "o-", color=cols[g], lw=2.2, ms=8)
+        a2.text(2.1, n["p99.9 / vmax"].iloc[-1] * 100 + {"WR": 1.0, "DB": -1.0, "DL": 0}[g], g, color=cols[g], fontsize=14, fontweight="bold", va="center")
+    a2.axhline(100, color="#555", ls="--", lw=1)
+    a2.text(-0.25, 98, "Combine top speed", color="#555", fontsize=11, va="top")
+    a2.set_ylim(65, 102)
+    a2.set_xticks(range(3), ["slowest\nthird", "middle", "fastest\nthird"])
+    a2.set_xlim(-0.3, 2.45)
+    a2.set_xlabel("Combine vmax tercile (within group)")
+    a2.set_ylabel("Game p99.9 speed, % of Combine vmax")
+    a2.set_title("Even the fastest game frames leave 15-27% unused", loc="left", fontsize=14)
+    for a in (a1, a2):
+        a.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(FIG, dpi=150)
+
+
+def report():
+    R = pd.read_pickle(PROC / "eda/shrinkage_results.pkl")
+    figure(R)
+    tests = R["tests"]
+    summ, strata = summary_table(R), strata_table(R)
+    ceil = R["ceil"].copy()
+    near = R["near"].drop(columns=["% frames >= 90% vmax"])
+    n_tests, n_p05 = len(tests), int((tests.p < 0.05).sum())
+    DOC.write_text("\n".join([
+        "# What explains the shrinkage? Moderators of Combine-to-game speed transfer\n",
+        f"_Generated {date.today().isoformat()} by `scripts/shrinkage.py`. Raw estimates: "
+        "`data/processed/eda/shrinkage_estimates.csv`, tests: `data/processed/eda/shrinkage_tests.csv`._\n",
+        SUMMARY.format(n_tests=n_tests, n_p05=n_p05, min_q=tests.q_BH.min()),
+        "## Design\n",
+        "Baseline: within group, log(window peak speed) ~ log(Combine vmax) + Combine weight + the "
+        "`translation.py` context + window-length spline + (1 | player); tracked 40s only. Baseline elasticities here: "
+        + ", ".join(f"{r.group} {r.est:.2f} [{r.lo95:.2f}, {r.hi95:.2f}]" for r in R["base"].itertuples()) + ".\n",
+        "- **Player-level moderators** (role, draft tier, usage, v10rel): `logCapC × moderator` and `weight × "
+        "moderator` in the MixedLM, so each stratum's slope is weight-controlled within that stratum. Replicated on "
+        "per-player whole-play p99 / p99.9 of all REG frames (OLS, HC1), players with >= 200 plays.\n"
+        "- **Play/season-level moderators** (experience, quarter, score margin, alignment, route depth): OLS with player "
+        "fixed effects and player-clustered SEs. The vmax main effect is absorbed, so the `logCapC × moderator` term is "
+        "identified purely *within player* (same player, rookie vs later season; Q1-3 vs Q4). Whole-play versions use "
+        "player × cell p99 / p99.9 with player FE.\n"
+        "- Role: WR outside vs SLOT_WR, and DL EDGE vs INTERIOR_LINE, by majority `linedUpPosition`; DB by "
+        "`nfl_position` (FS/SS = safety) with CBs whose majority alignment is SLOT_CB as slot CB. Draft tier from "
+        "`draft_round` (null = UDFA). Usage = snaps per REG game (routes per game for WR) from `player_play`. "
+        "Experience = season - draft year + 1 (only the 2023 and 2024 classes have a later season). Margin = own-team "
+        "pre-snap score margin.\n"
+        f"- **Multiplicity.** {n_tests} interaction tests (joint Wald for multi-level moderators), Benjamini-Hochberg "
+        "across all of them.\n",
+        "## Interaction estimates (Δ elasticity vs reference level)\n",
+        "`windows` = snap-to-throw peak speed; `whole-play p99.9` = per-player fastest 0.1% of REG frames. "
+        "p and q are for the joint test of the moderator within the group.\n",
+        md(summ.fillna(""), 3),
+        "## Stratum-specific elasticities\n",
+        md(strata),
+        "## Measurement error in the Combine vmax\n",
+        "Classical error in the regressor attenuates the slope by the reliability of the player's Combine mean "
+        "(within-group retest ICC, Spearman-Brown for the mean number of reps).\n",
+        md(R["me"]),
+        "## Ceiling / headroom: how close do players get to their Combine top speed?\n",
+        "Per-player frame-speed percentiles over all REG frames (incl. after the catch and in pursuit), pooled "
+        "across seasons, regressed on log vmax + log weight (HC1).\n",
+        md(ceil),
+        "\n", md(near),
+        "\nNo group has a meaningful share of frames at >= 90% of Combine vmax (median 0-0.01%).\n",
+        "![shrinkage](fig/shrinkage.png)\n",
+    ]))
+    print(DOC.read_text())
+
+
+SUMMARY = """## Summary: what explains the shrinkage
+
+- **Not who the player is, or when.** Across {n_tests} `logCapC × moderator` tests (role, alignment, draft
+  capital, experience, usage, speed-curve shape, quarter, score margin, route depth), {n_p05} have p < 0.05 and
+  **none survives Benjamini-Hochberg** (smallest q = {min_q:.2f}). The WR slot > outside hit and the DB role
+  pattern flip sign between the window and whole-play designs.
+- **Experience does not raise transfer.** Within player (same player, rookie vs year 2-3, player FE) the change
+  in elasticity is WR +0.12 [-0.15, 0.38], DB +0.10 [-0.27, 0.47], DL -0.12 [-0.26, 0.02] in windows, and about 0
+  in whole-play p99.9. High picks do not keep more of their speed. Burst shape (v10rel) does not moderate. The
+  fast-slow gap does not shrink in Q4 or in blowouts (Q4 point estimates are, if anything, slightly positive).
+- **Combine measurement error explains little: 1-7% of the shortfall.** Reliability would need to be about 0.27-0.42
+  to explain all of it. The observed reliability is 0.88-0.98.
+- **Headroom: game speed is demand-limited.** Players never run at Combine speed. Their fastest 0.1% of REG
+  frames reach a median 82-85% of vmax (WR/DB) and 73-75% (DL). Essentially no frames reach 90%. For DB and DL,
+  Combine vmax barely orders *typical* game speed (p90 elasticity DB 0.12, DL -0.17). It shows up only in the
+  rare all-out frames (p99.9: DB 0.48, DL 0.51; p99.99: DB 0.34, DL 0.65), and even there it stays well below 1.
+  The capacity is there, but few plays call for all of it, and the play (route, angle, pursuit target) sets the
+  speed. (WR is the exception: transfer is higher at p90, 0.53, probably because faster WRs are assigned deeper
+  routes. That is role, not capacity.)
+- **Exploratory, same direction in both designs (not BH-significant): DL.** Edge rushers keep more speed than
+  interior linemen (windows 0.73 vs 0.06; whole-play p99.9 0.77 vs 0.41). High-usage DL keep more than rotational
+  DL (windows +0.50 per SD of snaps/game, p = 0.01; whole-play +0.23, p = 0.08). Edge role and snap share overlap,
+  so these may be one effect. Interior linemen meet a blocker within a yard or two, so top speed rarely binds.
+
+**Writeup-worthy.** (1) *Speed on Sundays is set by the play, not the engine.* Even on their fastest frames,
+players use only about 80% of their Combine top speed. Capacity separates players only in those rare all-out
+moments. That headroom, not stopwatch noise (< 7% of the gap), is why transfer is about 40 cents on the dollar.
+(2) *A stable discount:* transfer does not grow with experience (tested within player), draft slot or Q4/blowout
+game state. The 0.3-0.5 elasticity looks like a fixed property of each position, not a rookie adjustment or a
+fatigue effect.
+"""
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    if "--report" in sys.argv:
+        report()
+        sys.exit(0)
+    rc = main()
+    report()
+    sys.exit(rc)
