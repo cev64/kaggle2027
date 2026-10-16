@@ -15,7 +15,8 @@ The 2027 data closes that loop for the first time: the same 510 prospects were t
 Combine and in every regular-season snap of 2023–2025. We use it to measure a **translation rate**: for every
 1% of Combine top speed a prospect has over a peer at his position, how much faster is he in NFL games?
 
-**The answer is about 0.4%. Within a position, a Combine speed edge is worth roughly forty cents on the dollar.**
+**At best about 0.4%. Within a position, a Combine speed edge is worth at most forty cents on the dollar, and for
+defensive backs and linemen on everyday plays, close to nothing.**
 
 ## Data and approach
 
@@ -94,8 +95,43 @@ talent and draft-slot confounding:
 
 ## Sunday Speed: a projection scouts can use
 
-[TBD from docs/sunday_speed.md: model, leave-one-class-out validation vs naive full transfer and vs the
-official forty, the 2025-class scout table, and "tests fast, plays slower" examples. 1 figure + 1 table.]
+We turn the translation into a projection of each prospect's **Sunday Speed**: the speed he reaches on his
+fastest one-in-ten NFL plays. This target is very repeatable (split-half reliability: WR 0.92, DL 0.94, DB 0.70).
+We fit the projection within position on Combine top speed and weight, and test it out of sample by
+training on two draft classes and predicting the third.
+
+| Projection (RMSE, yd/s; leave-one-class-out) | WR | DB | DL |
+|---|---|---|---|
+| Naive: Combine speed transfers in full | 0.325 | 0.366 | 0.501 |
+| Position average only | 0.353 | **0.253** | 0.557 |
+| Weight only | 0.309 | 0.255 | **0.407** |
+| Shrunk: Combine top speed + weight | **0.260** | 0.259 | 0.433 |
+| Official forty + weight | 0.281 | 0.258 | 0.425 |
+
+*Table 2. Out-of-sample accuracy for 154 WR/DB/DL with 200+ plays (48/55/51). Bold is the best per group.*
+
+- **Naive full transfer is the worst projection in every group.** It spreads players 1.6–1.9× too far apart.
+  Overall, the shrunk projection is 19% more accurate (0.077 yd/s [0.047, 0.108]), and its 80% intervals
+  (about ±0.7 mph) cover 80% of held-out players.
+- **Speed only earns its place for receivers.** On these everyday fast plays the elasticity is WR 0.49, but DB
+  0.01 and DL −0.09. Combine speed beats weight alone only for WRs (by 0.049 yd/s [0.002, 0.095]). For DL,
+  weight sorts game speed; for DBs, nothing at the Combine does better than the position average. The roughly
+  40% transfer for DB and DL appears only in the all-out moments of Figure 3.
+- **The official forty is about as good.** Tracking top speed edges it for WRs (0.260 vs 0.281), but the
+  difference is within noise (0.021 yd/s [−0.011, 0.053]).
+
+![sunday speed](../fig/sunday_speed.png)
+*Figure 4. Sunday Speed against Combine top speed. Dashed: naive full transfer. Solid: the shrunk projection.*
+
+**Tests fast, plays slower.** The largest naive misses are all players whose Combine speed far outran their
+game speed:
+- DL Tyrion Ingram-Dawkins: projected naively at 12.5 mph, actual 10.5.
+- DB Jaylon Carlies.
+- WR Ryan Flournoy: 4.44 forty, 1.8 mph below his naive projection.
+- WR Xavier Legette.
+
+For the 2025 class, trained only on 2023–24, the shrunk projection put first-year receivers within a mile per
+hour. Examples: Luther Burden projected 17.8 mph vs 18.0 actual, and Arian Smith 18.4 vs 19.1.
 
 ## What the tracking adds, and what it doesn't
 
@@ -110,8 +146,9 @@ We also report what did not survive:
 
 ## How a team would use this
 
-- **Draft season.** Discount 40-time gaps between same-position prospects by about 60% when projecting game
-  speed. Speed edges among receivers matter on vertical stems, so put the premium there.
+- **Draft season.** Discount 40-time gaps between same-position prospects by at least 60% when projecting game
+  speed. For DB and DL, project game speed from weight and role, not 40 speed. Among receivers, put the speed
+  premium on vertical stems, where faster reps actually earn separation.
 - **In season, week to week.** Track each player's game top speed against his own Sunday Speed projection. A
   sustained drop below projection is a monitoring flag for soft-tissue or return-to-play cases.
 - **Development.** For DL, get-off is the speed lever that pays (pressure per SD of quicker first step).
