@@ -18,7 +18,8 @@ _Generated 2026-10-16 by `scripts/sunday_speed.py`. Per-player table: `data/proc
   for WR (weight-only minus shrunk RMSE +0.049 yd/s, CI 0.002 to 0.095; elasticity
   0.49). For DB (elasticity 0.01) and DL (-0.09) on this whole-play target, weight carries the
   signal: the shrunk model is no better than weight alone (DL: slightly worse, -0.026 yd/s). On the
-  route/rush-window target the weight-controlled elasticities are (WR 0.23, DB 0.27, DL 0.35), consistent with "forty cents on the dollar".
+  route/rush-window target, the weight-controlled elasticities are WR 0.23, DB 0.27 and DL 0.35,
+  consistent with "forty cents on the dollar".
 - **Stopwatch equivalent: yes.** Official forty + weight matches tracking vmax + weight (pooled RMSE difference
   +0.002 yd/s, CI -0.009 to 0.013), and adding vmax to the forty adds nothing.
 - **Uncertainty.** The 80% prediction interval is about ±0.7 mph. Held-out coverage is 80%
