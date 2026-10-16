@@ -207,7 +207,11 @@ def beyond_stopwatch(d, players):
     return pd.DataFrame(rows)
 
 
-SUMMARY = """## Summary (interpretation as of 2026-10-15)
+SUMMARY = """> **Superseded in part (2026-10-16).** These elasticities pool WR and TE, so they mostly reflect WR-vs-TE
+> differences. Within WRs only, top speed transfers at about 0.3-0.5 and Combine burst is too unreliable to
+> translate (within-WR ICC 0.15). See `docs/translation.md`. The play-level and player-level results below stand.
+
+## Summary (interpretation as of 2026-10-15)
 
 **What holds up**
 - **Top speed translates almost one for one.** The elasticity of game peak speed on Combine vmax is 0.82

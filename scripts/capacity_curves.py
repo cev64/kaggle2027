@@ -90,6 +90,19 @@ def reliability(att, params):
     return pd.DataFrame(rows)
 
 
+def reliability_by_group(att, cr, params=("vmax", "burst2_10", "split2_10", "tModel40")):
+    """Retest ICC within each position group: the relevant reliability for within-group comparisons
+    (pooling groups inflates it with between-group differences)."""
+    pos = cr[["nflId", "combinePosition"]]
+    rows = []
+    for g in GROUPS:
+        ids = pos.loc[pos.combinePosition == g, "nflId"]
+        r = reliability(att[att.nflId.isin(ids)], params).assign(group=g)
+        rows.append(r)
+    out = pd.concat(rows)
+    return out.pivot_table(index="param", columns="group", values="ICC")[GROUPS].reset_index()
+
+
 def within_group_corr(cap):
     """Within-group Pearson r between the chosen capacities and the stopwatch."""
     pairs = [("vmax", "burst2_10"), ("vmax", "forty"), ("burst2_10", "forty"), ("burst2_10", "tenYdSplit"),
@@ -208,10 +221,18 @@ def main() -> int:
         "- **Top speed `vmax`**, from the model fit. Use the model, not the observed peak, because 97% of clips end "
         "while the runner is still accelerating or at speed.\n"
         "- **Burst `burst2_10`**: mean speed from 2 to 10 yd, timed from first movement. The model's τ and a0 are "
-        "reported, but they are poorly identified from a 3-point-stance start.\n",
+        "reported, but they are poorly identified from a 3-point-stance start.\n\n"
+        "**Correction (2026-10-16).** The pooled retest ICCs below overstate within-group reliability. Within WRs, "
+        "burst2_10 has a single-rep ICC of only 0.15, so its low redundancy with the stopwatch among WRs is mostly "
+        "noise, not a hidden second capacity. Burst is reliable within DL (0.81) and moderate for TE, DB and OL "
+        "(0.48-0.64). vmax is reliable in every group (0.80-0.97). See the within-group table.\n",
         "## Fit quality\n", md(fitq),
         "\n## Validation against the official stopwatch (fastest curve-implied time vs official best)\n", md(val),
-        "\n## Retest reliability (players with 2 usable reps)\n", md(rel),
+        "\n## Retest reliability (players with 2 usable reps)\n",
+        "Pooled across all groups. This **overstates** reliability for within-group comparisons, because "
+        "between-group differences (e.g. OL vs WR speed) count as true variance. Use the next table for "
+        "within-group work.\n\n", md(rel),
+        "\n### Within-group retest ICC (single rep)\n", md(reliability_by_group(att, cr)),
         "\n## Redundancy: CV R² of each capacity parameter from stopwatch + weight, within group\n",
         "Lower is better here: the remaining share is information the stopwatch does not carry.\n\n", md(red),
         "\n## Within-group correlations of the chosen capacities\n", md(within_group_corr(cap), 2),

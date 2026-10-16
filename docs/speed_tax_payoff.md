@@ -1,6 +1,10 @@
 # Speed Tax step 3: payoff tests
 
-_Generated 2026-10-15 by `scripts/speed_tax_payoff.py`._
+_Generated 2026-10-16 by `scripts/speed_tax_payoff.py`._
+
+> **Superseded in part (2026-10-16).** These elasticities pool WR and TE, so they mostly reflect WR-vs-TE
+> differences. Within WRs only, top speed transfers at about 0.3-0.5 and Combine burst is too unreliable to
+> translate (within-WR ICC 0.15). See `docs/translation.md`. The play-level and player-level results below stand.
 
 ## Summary (interpretation as of 2026-10-15)
 

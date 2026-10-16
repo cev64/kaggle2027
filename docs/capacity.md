@@ -1,6 +1,6 @@
 # Sprint capacity curves (Combine 40)
 
-_Generated 2026-10-15 by `scripts/capacity_curves.py`; model in `src/bdb27/capacity.py`._
+_Generated 2026-10-16 by `scripts/capacity_curves.py`; model in `src/bdb27/capacity.py`._
 
 Each tracked 40 attempt's reported speed is fit with the mono-exponential sprint model v(t) = vmax(1 − e^{−(t−t0)/τ}) (Samozino et al. 2016). The start time t0 is a free parameter, which absorbs inconsistent clip trimming. Derived capacities: a0 = vmax/τ (initial acceleration = relative horizontal force F0/m), d90 (distance to 90% of vmax), curve-implied 10-yd and 40 times from first movement, and peak relative power a0·vmax/4. Usable attempts have R² ≥ 0.97, RMSE ≤ 0.45 yd/s and a run of at least 38 yd. Player values are means over usable reps.
 
@@ -8,6 +8,8 @@ Each tracked 40 attempt's reported speed is fit with the mono-exponential sprint
 
 - **Top speed `vmax`**, from the model fit. Use the model, not the observed peak, because 97% of clips end while the runner is still accelerating or at speed.
 - **Burst `burst2_10`**: mean speed from 2 to 10 yd, timed from first movement. The model's τ and a0 are reported, but they are poorly identified from a 3-point-stance start.
+
+**Correction (2026-10-16).** The pooled retest ICCs below overstate within-group reliability. Within WRs, burst2_10 has a single-rep ICC of only 0.15, so its low redundancy with the stopwatch among WRs is mostly noise, not a hidden second capacity. Burst is reliable within DL (0.81) and moderate for TE, DB and OL (0.48-0.64). vmax is reliable in every group (0.80-0.97). See the within-group table.
 
 ## Fit quality
 
@@ -36,6 +38,9 @@ Each tracked 40 attempt's reported speed is fit with the mono-exponential sprint
 
 ## Retest reliability (players with 2 usable reps)
 
+Pooled across all groups. This **overstates** reliability for within-group comparisons, because between-group differences (e.g. OL vs WR speed) count as true variance. Use the next table for within-group work.
+
+
 | param      |   nPlayers |   retest_r |   ICC |   within_sd |
 |:-----------|-----------:|-----------:|------:|------------:|
 | vmax       |        364 |      0.971 | 0.97  |       0.157 |
@@ -51,6 +56,16 @@ Each tracked 40 attempt's reported speed is fit with the mono-exponential sprint
 | v10        |        364 |      0.943 | 0.943 |       0.124 |
 | v10rel     |        364 |      0.693 | 0.689 |       0.019 |
 | burst2_10  |        364 |      0.805 | 0.805 |       0.182 |
+
+
+### Within-group retest ICC (single rep)
+
+| param     |    WR |    TE |    DB |    DL |    OL |
+|:----------|------:|------:|------:|------:|------:|
+| burst2_10 | 0.141 | 0.555 | 0.482 | 0.811 | 0.642 |
+| split2_10 | 0.161 | 0.554 | 0.483 | 0.815 | 0.61  |
+| tModel40  | 0.479 | 0.791 | 0.72  | 0.958 | 0.839 |
+| vmax      | 0.795 | 0.862 | 0.836 | 0.97  | 0.859 |
 
 
 ## Redundancy: CV R² of each capacity parameter from stopwatch + weight, within group

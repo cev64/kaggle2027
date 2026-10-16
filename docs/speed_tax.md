@@ -1,6 +1,6 @@
 # Speed Tax: capacity usage on regular-season routes
 
-_Generated 2026-10-15 by `scripts/speed_tax.py`; window extraction in `src/bdb27/usage.py`._
+_Generated 2026-10-16 by `scripts/speed_tax.py`; window extraction in `src/bdb27/usage.py`._
 
 Each WR/TE route (REG, `route_ran` non-null) is measured from the snap to the throw: peak speed and burst (mean path speed from 2 to 10 yd). Both are expressed as fractions of the player's Combine capacity (`vmax`, `burst2_10`; see `docs/capacity.md`). A linear mixed model with a player random intercept separates situational demand from the player's habitual usage:
 
@@ -85,7 +85,7 @@ The **tax** is the player's random intercept, in capacity-fraction units. Negati
 ## Caveats
 
 - **High reliability is expected, not a finding.** In-game speed is a stable player trait, and dividing it by a fixed Combine number keeps it stable. The tax is only interesting if it predicts something (within-player separation; step 3) or differs from absolute game speed.
-- **Regression to the mean.** Noise in the Combine denominator shows up as a negative tax–capacity correlation. `vmax` is precise (ICC 0.97), so the speed tax is little affected (ρ = −0.16). The Combine burst is noisier (ICC 0.82), and burst tax vs `burst2_10` has ρ = −0.42, so part of that is artefact. Fix in step 3 by shrinking the denominator or modelling log(game) ~ log(Combine) with a slope.
+- **Regression to the mean.** Noise in the Combine denominator shows up as a negative tax–capacity correlation. `vmax` is precise (ICC 0.97), so the speed tax is little affected (ρ = −0.16). The Combine burst is much noisier (within-WR retest ICC only 0.15; the pooled 0.82 overstates it), and burst tax vs `burst2_10` has ρ = −0.42, so the burst tax is largely artefact. Fix in step 3 by shrinking the denominator or modelling log(game) ~ log(Combine) with a slope.
 - **Short windows.** Windows end at the throw (median 2.8 s), so deep routes are still accelerating. Speed used means capacity reached by the throw, which mixes acceleration and top speed.
 - Raw mean separation is confounded by route mix (deep routes separate less). Compare separation within player and route, not across players.
 

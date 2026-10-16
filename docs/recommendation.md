@@ -2,6 +2,23 @@
 
 *2026-10-15. Evidence: `docs/eda/drill_quality.md`, `docs/eda/outcomes.md`, `docs/eda/game_movement.md`, `docs/eda/confounding.md`, and `scripts/eda/incremental_checks.py`.*
 
+## Update 2026-10-16: direction is now the translation study ("Forty Cents on the Dollar")
+
+The Speed Tax flagship was built and tested (`docs/capacity.md`, `docs/speed_tax.md`, `docs/speed_tax_payoff.md`).
+Its core hypothesis failed:
+- the share of capacity used does not explain separation better than absolute speed;
+- no tracking capacity or tax adds to draft slot, forty and size at the player level.
+
+The project is now **option A, a Combine-to-game translation study** (`docs/translation.md`, `docs/fig/translation.png`):
+- **Main result.** Within a position and holding weight fixed, about 40% of a Combine top-speed edge shows up in
+  game speed: elasticity 0.3-0.5 for WR, DB and DL, robust to long windows and whole-play maximum speed.
+- **Corrections to claims below.**
+  - Combine burst is not reliable within WRs (ICC 0.15). The "tracking reveals a burst capacity the stopwatch
+    misses" claim does not hold for WRs; it was noise.
+  - The earlier pooled reliabilities (0.77-0.82) overstated within-group reliability.
+- **Football payoff, within player.** Faster reps earn separation on vertical routes and targets on breaking
+  routes. A quicker DL get-off raises pressure probability.
+
 ## What the data does and does not support
 
 - **Combine tracking is accurate.**
